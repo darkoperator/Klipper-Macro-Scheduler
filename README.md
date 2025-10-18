@@ -78,8 +78,6 @@ managed_services: moonraker
 install_script: install.sh
 ```
 
-**Note:** Replace `YOUR-USERNAME` with the actual GitHub repository location once you publish this project.
-
 ### Step 5: Restart Moonraker
 
 ```bash
