@@ -1,0 +1,811 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Macro Scheduler</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0f172a;
+            color: #e2e8f0;
+            padding: 20px;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 2px solid #1e293b;
+        }
+
+        .header h1 {
+            font-size: 2em;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            color: #e2e8f0;
+        }
+
+        .header h1 svg {
+            color: #60a5fa;
+        }
+
+        .btn {
+            padding: 10px 20px;
+            background: #3b82f6;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: background 0.2s;
+        }
+
+        .btn:hover {
+            background: #2563eb;
+        }
+
+        .btn-danger {
+            background: #dc2626;
+        }
+
+        .btn-danger:hover {
+            background: #b91c1c;
+        }
+
+        .btn-warning {
+            background: #f59e0b;
+        }
+
+        .btn-warning:hover {
+            background: #d97706;
+        }
+
+        .btn-success {
+            background: #10b981;
+        }
+
+        .btn-success:hover {
+            background: #059669;
+        }
+
+        .btn-small {
+            padding: 6px 12px;
+            font-size: 13px;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            background: #1e293b;
+            border-radius: 8px;
+        }
+
+        .empty-state svg {
+            width: 80px;
+            height: 80px;
+            opacity: 0.5;
+            margin-bottom: 20px;
+        }
+
+        .schedule-card {
+            background: #1e293b;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 15px;
+            border-left: 4px solid #10b981;
+            transition: transform 0.2s;
+        }
+
+        .schedule-card:hover {
+            transform: translateX(5px);
+        }
+
+        .schedule-card.disabled {
+            border-left-color: #64748b;
+            opacity: 0.6;
+        }
+
+        .schedule-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: start;
+            margin-bottom: 15px;
+        }
+
+        .schedule-title {
+            font-size: 1.2em;
+            font-weight: 600;
+            margin-bottom: 5px;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+            margin-left: 10px;
+        }
+
+        .badge-success {
+            background: #065f46;
+            color: #6ee7b7;
+        }
+
+        .badge-inactive {
+            background: #374151;
+            color: #9ca3af;
+        }
+
+        .schedule-details {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            color: #94a3b8;
+        }
+
+        .schedule-detail {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: #94a3b8;
+        }
+
+        .schedule-detail span:first-child {
+            min-width: 16px;
+            text-align: center;
+        }
+
+        .schedule-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        code {
+            background: #0f172a;
+            padding: 3px 8px;
+            border-radius: 4px;
+            color: #60a5fa;
+            font-family: 'Courier New', monospace;
+        }
+
+        .next-run {
+            color: #10b981;
+            font-weight: 500;
+            margin-top: 8px;
+        }
+
+        /* Modal Styles */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+
+        .modal.active {
+            display: flex;
+        }
+
+        .modal-content {
+            background: #1e293b;
+            padding: 30px;
+            border-radius: 12px;
+            width: 90%;
+            max-width: 500px;
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+
+        .modal-header {
+            font-size: 1.5em;
+            font-weight: 600;
+            margin-bottom: 20px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+        }
+
+        .form-group input,
+        .form-group select,
+        .form-group textarea {
+            width: 100%;
+            padding: 10px;
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 6px;
+            color: #e2e8f0;
+            font-size: 14px;
+            color-scheme: dark;
+        }
+
+        /* Style datetime and time picker icons */
+        input[type="datetime-local"],
+        input[type="time"],
+        input[type="date"] {
+            color-scheme: dark;
+        }
+
+        /* Make sure icons are visible */
+        input[type="datetime-local"]::-webkit-calendar-picker-indicator,
+        input[type="time"]::-webkit-calendar-picker-indicator,
+        input[type="date"]::-webkit-calendar-picker-indicator {
+            filter: invert(1);
+            cursor: pointer;
+        }
+
+        .form-group textarea {
+            font-family: 'Courier New', monospace;
+            resize: vertical;
+        }
+
+        .form-group input[type="checkbox"] {
+            width: auto;
+            margin-right: 5px;
+            cursor: pointer;
+        }
+
+        .day-checkbox {
+            accent-color: #3b82f6;
+        }
+
+        .form-actions {
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+            margin-top: 25px;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #64748b;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                    <line x1="16" y1="2" x2="16" y2="6"></line>
+                    <line x1="8" y1="2" x2="8" y2="6"></line>
+                    <line x1="3" y1="10" x2="21" y2="10"></line>
+                </svg>
+                Macro Scheduler
+            </h1>
+            <button class="btn" onclick="openAddModal()">+ Add Schedule</button>
+        </div>
+
+        <div id="schedules-container">
+            <div class="loading">Loading schedules...</div>
+        </div>
+    </div>
+
+    <!-- Add Schedule Modal -->
+    <div id="addModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">Add New Schedule</div>
+            
+            <div class="form-group">
+                <label>Schedule Name</label>
+                <input type="text" id="scheduleName" placeholder="e.g., Morning Preheat">
+            </div>
+
+            <div class="form-group">
+                <label>Macro</label>
+                <select id="scheduleMacro">
+                    <option value="">Select a macro...</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label>Schedule Type</label>
+                <select id="scheduleType" onchange="updateScheduleFields()">
+                    <option value="once">Once</option>
+                    <option value="daily">Daily</option>
+                    <option value="weekly">Weekly (Custom Days)</option>
+                    <option value="interval">Interval (Every N Minutes)</option>
+                    <option value="cron">Cron Expression (Advanced)</option>
+                </select>
+            </div>
+
+            <!-- Once: Date & Time -->
+            <div class="form-group" id="field_once" style="display: block;">
+                <label>Date & Time</label>
+                <input type="datetime-local" id="scheduleDatetime">
+            </div>
+
+            <!-- Daily: Time only -->
+            <div class="form-group" id="field_daily" style="display: none;">
+                <label>Time</label>
+                <input type="time" id="scheduleTime">
+            </div>
+
+            <!-- Weekly: Time + Days -->
+            <div id="field_weekly" style="display: none;">
+                <div class="form-group">
+                    <label>Time</label>
+                    <input type="time" id="scheduleTimeWeekly">
+                </div>
+                
+                <div class="form-group">
+                    <label>Days of Week</label>
+                    <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-top: 8px;">
+                        <label style="display: flex; align-items: center; gap: 5px; cursor: pointer; padding: 8px; background: #0f172a; border-radius: 4px;">
+                            <input type="checkbox" value="0" class="day-checkbox"> Monday
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 5px; cursor: pointer; padding: 8px; background: #0f172a; border-radius: 4px;">
+                            <input type="checkbox" value="1" class="day-checkbox"> Tuesday
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 5px; cursor: pointer; padding: 8px; background: #0f172a; border-radius: 4px;">
+                            <input type="checkbox" value="2" class="day-checkbox"> Wednesday
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 5px; cursor: pointer; padding: 8px; background: #0f172a; border-radius: 4px;">
+                            <input type="checkbox" value="3" class="day-checkbox"> Thursday
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 5px; cursor: pointer; padding: 8px; background: #0f172a; border-radius: 4px;">
+                            <input type="checkbox" value="4" class="day-checkbox"> Friday
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 5px; cursor: pointer; padding: 8px; background: #0f172a; border-radius: 4px;">
+                            <input type="checkbox" value="5" class="day-checkbox"> Saturday
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 5px; cursor: pointer; padding: 8px; background: #0f172a; border-radius: 4px;">
+                            <input type="checkbox" value="6" class="day-checkbox"> Sunday
+                        </label>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Interval: Minutes -->
+            <div class="form-group" id="field_interval" style="display: none;">
+                <label>Run Every (minutes)</label>
+                <input type="number" id="scheduleInterval" min="1" value="60" placeholder="60">
+                <small style="color: #64748b; display: block; margin-top: 5px;">
+                    Examples: 60 = hourly, 180 = every 3 hours, 1440 = daily
+                </small>
+            </div>
+
+            <!-- Cron: Expression -->
+            <div class="form-group" id="field_cron" style="display: none;">
+                <label>Cron Expression</label>
+                <input type="text" id="scheduleCron" placeholder="0 9 * * 1" style="font-family: monospace;">
+                <small style="color: #64748b; display: block; margin-top: 5px; line-height: 1.6;">
+                    <strong>Format:</strong> minute hour day month weekday<br>
+                    <strong>Examples:</strong><br>
+                    • <code style="background: #0f172a; padding: 2px 4px; border-radius: 3px;">0 9 * * 1</code> - Every Monday at 9:00 AM<br>
+                    • <code style="background: #0f172a; padding: 2px 4px; border-radius: 3px;">30 14 * * 1,3,5</code> - Mon, Wed, Fri at 2:30 PM<br>
+                    • <code style="background: #0f172a; padding: 2px 4px; border-radius: 3px;">0 */3 * * *</code> - Every 3 hours<br>
+                    • <code style="background: #0f172a; padding: 2px 4px; border-radius: 3px;">0 0 * * *</code> - Daily at midnight
+                </small>
+            </div>
+
+            <div class="form-group">
+                <label>Parameters (JSON)</label>
+                <textarea id="scheduleParams" rows="4" placeholder='{"TEMP": 60, "SPEED": 100}'>{}</textarea>
+                <small style="color: #64748b;">Optional: Add macro parameters as JSON</small>
+            </div>
+
+            <div class="form-actions">
+                <button class="btn" onclick="closeAddModal()">Cancel</button>
+                <button class="btn btn-success" onclick="addSchedule()">Add Schedule</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Configuration - Use the full Moonraker URL with port
+        const API_BASE = window.location.port === '7125' 
+            ? window.location.origin 
+            : `${window.location.protocol}//${window.location.hostname}:7125`;
+        
+        console.log('API_BASE:', API_BASE);
+        
+        let schedules = [];
+        let macros = [];
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            checkStatus();
+        });
+
+        async function checkStatus() {
+            // First check if the backend is working
+            try {
+                const response = await fetch(`${API_BASE}/server/info`);
+                const data = await response.json();
+                console.log('Moonraker connected:', data);
+                
+                // Now try to load our data
+                await loadSchedules();
+                await loadMacros();
+            } catch (error) {
+                console.error('Error connecting to Moonraker:', error);
+                document.getElementById('schedules-container').innerHTML = `
+                    <div class="empty-state">
+                        <h3>⚠️ Cannot connect to Moonraker</h3>
+                        <p style="color: #64748b; margin-top: 10px;">
+                            Make sure Moonraker is running and accessible.<br>
+                            Check the browser console for details.
+                        </p>
+                    </div>
+                `;
+            }
+        }
+
+        // API Functions
+        async function loadSchedules() {
+            try {
+                const response = await fetch(`${API_BASE}/server/macro_scheduler/schedules`);
+                
+                // Check if response is JSON
+                const contentType = response.headers.get('content-type');
+                if (!contentType || !contentType.includes('application/json')) {
+                    throw new Error('Component not loaded. Did you add [macro_scheduler] to moonraker.conf and restart?');
+                }
+                
+                const data = await response.json();
+                schedules = data.result?.schedules || [];
+                renderSchedules();
+            } catch (error) {
+                console.error('Error loading schedules:', error);
+                document.getElementById('schedules-container').innerHTML = `
+                    <div class="empty-state">
+                        <h3>⚠️ Scheduler Component Not Active</h3>
+                        <p style="color: #64748b; margin-top: 10px;">
+                            ${error.message}<br><br>
+                            <strong>Setup Steps:</strong><br>
+                            1. Make sure macro_scheduler.py is in ~/moonraker/moonraker/components/<br>
+                            2. Add [macro_scheduler] to moonraker.conf<br>
+                            3. Restart Moonraker<br>
+                            4. Check logs: tail -f ~/printer_data/logs/moonraker.log
+                        </p>
+                    </div>
+                `;
+            }
+        }
+
+        async function loadMacros() {
+            try {
+                const response = await fetch(`${API_BASE}/printer/gcode/help`);
+                
+                // Check if response is JSON
+                const contentType = response.headers.get('content-type');
+                if (!contentType || !contentType.includes('application/json')) {
+                    console.warn('Could not load macros from Klipper');
+                    // Use some default macros
+                    macros = ['PAUSE', 'RESUME', 'CANCEL_PRINT'];
+                    updateMacroSelect();
+                    return;
+                }
+                
+                const data = await response.json();
+                
+                // Extract macro names (uppercase commands starting with letters)
+                macros = Object.keys(data.result || {}).filter(cmd => 
+                    cmd === cmd.toUpperCase() && 
+                    !cmd.startsWith('_') &&
+                    /^[A-Z]/.test(cmd)
+                ).sort();
+                
+                // Add some common ones if not present
+                ['PAUSE', 'RESUME', 'CANCEL_PRINT'].forEach(macro => {
+                    if (!macros.includes(macro)) {
+                        macros.push(macro);
+                    }
+                });
+                
+                updateMacroSelect();
+            } catch (error) {
+                console.error('Error loading macros:', error);
+                // Fallback to basic macros
+                macros = ['PAUSE', 'RESUME', 'CANCEL_PRINT', 'TEST_MACRO'];
+                updateMacroSelect();
+            }
+        }
+
+        function updateMacroSelect() {
+            const select = document.getElementById('scheduleMacro');
+            select.innerHTML = '<option value="">Select a macro...</option>';
+            macros.forEach(macro => {
+                const option = document.createElement('option');
+                option.value = macro;
+                option.textContent = macro;
+                select.appendChild(option);
+            });
+        }
+
+        async function addSchedule() {
+            const name = document.getElementById('scheduleName').value;
+            const macro = document.getElementById('scheduleMacro').value;
+            const scheduleType = document.getElementById('scheduleType').value;
+            const paramsText = document.getElementById('scheduleParams').value;
+
+            if (!name || !macro) {
+                alert('Please fill in name and macro');
+                return;
+            }
+
+            let params = {};
+            try {
+                params = JSON.parse(paramsText);
+            } catch (e) {
+                alert('Invalid JSON in parameters');
+                return;
+            }
+
+            const payload = {
+                name,
+                macro,
+                schedule_type: scheduleType,
+                params
+            };
+
+            // Get schedule-type specific values
+            if (scheduleType === 'once') {
+                const datetime = document.getElementById('scheduleDatetime').value;
+                if (!datetime) {
+                    alert('Please select a date and time');
+                    return;
+                }
+                payload.datetime = datetime;
+            } else if (scheduleType === 'daily') {
+                const time = document.getElementById('scheduleTime').value;
+                if (!time) {
+                    alert('Please select a time');
+                    return;
+                }
+                payload.time = time;
+            } else if (scheduleType === 'weekly') {
+                const time = document.getElementById('scheduleTimeWeekly').value;
+                if (!time) {
+                    alert('Please select a time');
+                    return;
+                }
+                // Get selected days
+                const dayCheckboxes = document.querySelectorAll('.day-checkbox:checked');
+                const days = Array.from(dayCheckboxes).map(cb => parseInt(cb.value));
+                if (days.length === 0) {
+                    alert('Please select at least one day');
+                    return;
+                }
+                payload.time = time;
+                payload.days = days;
+            } else if (scheduleType === 'interval') {
+                const intervalMinutes = parseInt(document.getElementById('scheduleInterval').value);
+                if (!intervalMinutes || intervalMinutes < 1) {
+                    alert('Please enter a valid interval in minutes (at least 1)');
+                    return;
+                }
+                payload.interval_minutes = intervalMinutes;
+            } else if (scheduleType === 'cron') {
+                const cron = document.getElementById('scheduleCron').value.trim();
+                if (!cron) {
+                    alert('Please enter a cron expression');
+                    return;
+                }
+                // Basic validation - should have 5 parts
+                if (cron.split(' ').length !== 5) {
+                    alert('Invalid cron expression. Format: minute hour day month weekday\nExample: 0 9 * * 1');
+                    return;
+                }
+                payload.cron_expression = cron;
+            }
+
+            try {
+                console.log('Sending payload:', payload);
+                const response = await fetch(`${API_BASE}/server/macro_scheduler/add`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                if (response.ok) {
+                    closeAddModal();
+                    loadSchedules();
+                } else {
+                    const error = await response.json();
+                    alert('Error adding schedule: ' + (error.error?.message || 'Unknown error'));
+                }
+            } catch (error) {
+                console.error('Error adding schedule:', error);
+                alert('Error adding schedule: ' + error.message);
+            }
+        }
+
+        async function toggleSchedule(id) {
+            try {
+                await fetch(`${API_BASE}/server/macro_scheduler/toggle`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id })
+                });
+                loadSchedules();
+            } catch (error) {
+                console.error('Error toggling schedule:', error);
+            }
+        }
+
+        async function deleteSchedule(id) {
+            if (!confirm('Are you sure you want to delete this schedule?')) {
+                return;
+            }
+
+            try {
+                await fetch(`${API_BASE}/server/macro_scheduler/delete`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id })
+                });
+                loadSchedules();
+            } catch (error) {
+                console.error('Error deleting schedule:', error);
+            }
+        }
+
+        // UI Functions
+        function renderSchedules() {
+            const container = document.getElementById('schedules-container');
+            
+            if (schedules.length === 0) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                            <line x1="16" y1="2" x2="16" y2="6"></line>
+                            <line x1="8" y1="2" x2="8" y2="6"></line>
+                            <line x1="3" y1="10" x2="21" y2="10"></line>
+                        </svg>
+                        <h3>No schedules yet</h3>
+                        <p style="color: #64748b; margin-top: 10px;">
+                            Click "Add Schedule" to create your first scheduled macro
+                        </p>
+                    </div>
+                `;
+                return;
+            }
+
+            container.innerHTML = schedules.map(schedule => `
+                <div class="schedule-card ${schedule.enabled ? '' : 'disabled'}">
+                    <div class="schedule-header">
+                        <div>
+                            <div class="schedule-title">
+                                ${schedule.name}
+                                <span class="badge ${schedule.enabled ? 'badge-success' : 'badge-inactive'}">
+                                    ${schedule.enabled ? 'Active' : 'Inactive'}
+                                </span>
+                            </div>
+                            <div class="schedule-details">
+                                <div class="schedule-detail">
+                                    <span>▶</span>
+                                    <code>${schedule.macro}</code>
+                                </div>
+                                <div class="schedule-detail">
+                                    <span>🕐</span>
+                                    <span>${formatScheduleTime(schedule)}</span>
+                                </div>
+                                ${Object.keys(schedule.params || {}).length > 0 ? `
+                                    <div class="schedule-detail">
+                                        <span>⚙</span>
+                                        <code style="font-size: 12px;">${JSON.stringify(schedule.params)}</code>
+                                    </div>
+                                ` : ''}
+                                ${schedule.enabled && schedule.next_run ? `
+                                    <div class="next-run">
+                                        Next run: ${formatDateTime(schedule.next_run)}
+                                    </div>
+                                ` : ''}
+                            </div>
+                        </div>
+                        <div class="schedule-actions">
+                            <button 
+                                class="btn btn-small ${schedule.enabled ? 'btn-warning' : 'btn-success'}"
+                                onclick="toggleSchedule(${schedule.id})">
+                                ${schedule.enabled ? 'Disable' : 'Enable'}
+                            </button>
+                            <button 
+                                class="btn btn-small btn-danger"
+                                onclick="deleteSchedule(${schedule.id})">
+                                Delete
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function formatScheduleTime(schedule) {
+            if (schedule.schedule_type === 'once') {
+                return `Once on ${formatDateTime(schedule.datetime)}`;
+            } else if (schedule.schedule_type === 'daily') {
+                return `Daily at ${schedule.time}`;
+            } else {
+                return `Weekly at ${schedule.time}`;
+            }
+        }
+
+        function formatDateTime(datetime) {
+            if (!datetime) return 'Not scheduled';
+            return new Date(datetime).toLocaleString();
+        }
+
+        function openAddModal() {
+            document.getElementById('addModal').classList.add('active');
+            resetAddForm();
+        }
+
+        function closeAddModal() {
+            document.getElementById('addModal').classList.remove('active');
+        }
+
+        function resetAddForm() {
+            document.getElementById('scheduleName').value = '';
+            document.getElementById('scheduleMacro').value = '';
+            document.getElementById('scheduleType').value = 'once';
+            document.getElementById('scheduleDatetime').value = '';
+            document.getElementById('scheduleTime').value = '';
+            document.getElementById('scheduleTimeWeekly').value = '';
+            document.getElementById('scheduleInterval').value = '60';
+            document.getElementById('scheduleCron').value = '';
+            document.getElementById('scheduleParams').value = '{}';
+            
+            // Uncheck all day checkboxes
+            document.querySelectorAll('.day-checkbox').forEach(cb => cb.checked = false);
+            
+            updateScheduleFields();
+        }
+
+        function updateScheduleFields() {
+            const type = document.getElementById('scheduleType').value;
+            const datetimeGroup = document.getElementById('datetimeGroup');
+            const timeGroup = document.getElementById('timeGroup');
+
+            if (type === 'once') {
+                datetimeGroup.style.display = 'block';
+                timeGroup.style.display = 'none';
+            } else {
+                datetimeGroup.style.display = 'none';
+                timeGroup.style.display = 'block';
+            }
+        }
+
+        // Close modal when clicking outside
+        document.getElementById('addModal').addEventListener('click', (e) => {
+            if (e.target.id === 'addModal') {
+                closeAddModal();
+            }
+        });
+    </script>
+</body>
+</html>
