@@ -704,6 +704,6 @@ grep "Macro Scheduler" ~/printer_data/logs/moonraker.log
 ## Support
 
 For issues or questions:
-- **GitHub Issues**: [Report bugs](https://github.com/YOUR-USERNAME/klipper-macro-scheduler/issues)
+- **GitHub Issues**: [Report bugs](https://github.com/darkoperator/Klipper-Macro-Scheduler/issues)
 - **Klipper Discourse**: [Community support](https://klipper.discourse.group/)
-- **Documentation**: [Full docs](https://github.com/YOUR-USERNAME/klipper-macro-scheduler)
+- **Documentation**: [Full docs](https://github.com/darkoperator/Klipper-Macro-Scheduler)
