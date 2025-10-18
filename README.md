@@ -624,7 +624,6 @@ This project is licensed under the GNU GPLv3 License.
 
 ## Support
 
-- **Documentation**: [Full docs](https://your-docs-url.com)
 - **Issues**: [GitHub Issues](https://github.com/darkoperator/klipper-macro-scheduler/issues)
 - **Discord**: [Klipper Discord](https://discord.gg/klipper)
 
