@@ -12,7 +12,7 @@ A powerful scheduling system for Klipper 3D printers that allows you to schedule
 - **Status Tracking**: See next run times and execution history
 - **Auto-Start**: Schedules resume automatically after Moonraker restarts
 
-## Installation
+## Installation Steps
 
 ### Prerequisites
 
@@ -20,6 +20,22 @@ A powerful scheduling system for Klipper 3D printers that allows you to schedule
 - Moonraker API server running
 - Web browser access to your printer
 - Mainsail
+
+### Git Installation
+
+```Bash
+# SSH into your printer
+ssh pi@your-printer-ip
+# Clone Repo in to macro_scheduler folder
+git clone https://github.com/darkoperator/Klipper-Macro-Scheduler.git macro_scheduler
+
+# Run install Script
+cd macro_scheduler/
+bash install.sh
+```
+### Manual Installation
+
+
 
 ### Step 1: Install the Moonraker Component
 
@@ -50,7 +66,7 @@ Copy the entire UI code from `scheduler_ui.html` and paste it into the file.
 
 Save with `Ctrl+X`, `Y`, `Enter`.
 
-### Step 3: Configure Moonraker
+## Configure Moonraker
 
 ```bash
 # Edit moonraker.conf
@@ -64,7 +80,7 @@ Add this section:
 # This enables the macro scheduler component
 ```
 
-### Step 4: Enable Auto-Updates (Optional but Recommended)
+### Enable Auto-Updates (Optional but Recommended)
 
 Add this to your `moonraker.conf`:
 
@@ -78,7 +94,7 @@ managed_services: moonraker
 install_script: install.sh
 ```
 
-### Step 5: Restart Moonraker
+### Restart Moonraker
 
 ```bash
 sudo systemctl restart moonraker
@@ -96,7 +112,7 @@ Macro Scheduler Component Initialized
 Macro Scheduler is ready
 ```
 
-### Step 6: Access the UI
+## Access the UI
 
 Open your browser and navigate to:
 ```
