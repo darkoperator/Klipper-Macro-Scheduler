@@ -72,7 +72,7 @@ Add this to your `moonraker.conf`:
 [update_manager macro_scheduler]
 type: git_repo
 path: ~/macro_scheduler
-origin: https://github.com/YOUR-USERNAME/klipper-macro-scheduler.git
+origin: https://github.com/darkoperator/klipper-macro-scheduler.git
 primary_branch: main
 managed_services: moonraker
 install_script: install.sh
