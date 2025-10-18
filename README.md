@@ -1,4 +1,5 @@
 # Klipper Macro Scheduler
+<img width="1233" height="481" alt="{36147343-6C81-40DA-83BC-F08D9152A818}" src="https://github.com/user-attachments/assets/76fe5443-5955-4535-9dae-963dd17f14ec" />
 
 A powerful scheduling system for Klipper 3D printers that allows you to schedule macros to run at specific times, intervals, or using cron expressions.
 
