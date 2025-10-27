@@ -786,26 +786,30 @@
             updateScheduleFields();
         }
 
-        function updateScheduleFields() {
+       function updateScheduleFields() {
             const type = document.getElementById('scheduleType').value;
-            const datetimeGroup = document.getElementById('datetimeGroup');
-            const timeGroup = document.getElementById('timeGroup');
+            console.log('Schedule type:', type);
+            
+            // Get all field groups using the NEW IDs
+            const fields = {
+                'once': document.getElementById('field_once'),
+                'daily': document.getElementById('field_daily'),
+                'weekly': document.getElementById('field_weekly'),
+                'interval': document.getElementById('field_interval'),
+                'cron': document.getElementById('field_cron')
+            };
 
-            if (type === 'once') {
-                datetimeGroup.style.display = 'block';
-                timeGroup.style.display = 'none';
-            } else {
-                datetimeGroup.style.display = 'none';
-                timeGroup.style.display = 'block';
+            // Hide all fields first
+            Object.values(fields).forEach(field => {
+                if (field) field.style.display = 'none';
+            });
+
+            // Show the selected field
+            if (fields[type]) {
+                fields[type].style.display = 'block';
+                console.log('Showing field for:', type);
             }
         }
-
-        // Close modal when clicking outside
-        document.getElementById('addModal').addEventListener('click', (e) => {
-            if (e.target.id === 'addModal') {
-                closeAddModal();
-            }
-        });
     </script>
 </body>
 </html>
