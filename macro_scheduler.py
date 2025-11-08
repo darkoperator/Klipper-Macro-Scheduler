@@ -70,7 +70,7 @@ class MacroScheduler:
         logging.info("Macro Scheduler is ready")
         logging.info("API available at: /server/macro_scheduler/schedules")
         logging.info("Use LIST_SCHEDULES macro to view schedules from Klipper")
-    
+
     async def _load_schedules(self):
         """Load schedules from database"""
         if not self.database:

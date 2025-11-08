@@ -425,12 +425,28 @@
     </div>
 
     <script>
-        // Configuration - Use the full Moonraker URL with port
-        const API_BASE = window.location.port === '7125' 
-            ? window.location.origin 
-            : `${window.location.protocol}//${window.location.hostname}:7125`;
-        
-        console.log('API_BASE:', API_BASE);
+        // Determine Moonraker base URL, preferring the current origin to avoid CORS issues.
+        const urlParams = new URLSearchParams(window.location.search);
+        const apiOverride = urlParams.get('api_base');
+        const FALLBACK_PORT = '7125';
+        const apiCandidates = [];
+
+        function pushCandidate(value) {
+            if (!value || value === 'null') {
+                return;
+            }
+            const normalized = value.replace(/\/$/, '');
+            if (!apiCandidates.includes(normalized)) {
+                apiCandidates.push(normalized);
+            }
+        }
+
+        pushCandidate(apiOverride);
+        pushCandidate(window.location.origin);
+        pushCandidate(`${window.location.protocol}//${window.location.hostname}:${FALLBACK_PORT}`);
+
+        let API_BASE = apiCandidates[0];
+        console.log('API candidates:', apiCandidates);
         
         let schedules = [];
         let macros = [];
@@ -440,12 +456,29 @@
             checkStatus();
         });
 
+        async function resolveApiBase() {
+            for (const candidate of apiCandidates) {
+                try {
+                    const response = await fetch(`${candidate}/server/info`);
+                    if (!response.ok) {
+                        continue;
+                    }
+                    API_BASE = candidate;
+                    console.log('Moonraker connected via:', API_BASE);
+                    return await response.json();
+                } catch (error) {
+                    console.warn(`Failed to reach Moonraker at ${candidate}`, error);
+                }
+            }
+            throw new Error(
+                'Unable to reach Moonraker. Ensure this page is served from Mainsail/Fluidd or pass ?api_base=http://host:7125'
+            );
+        }
+
         async function checkStatus() {
             // First check if the backend is working
             try {
-                const response = await fetch(`${API_BASE}/server/info`);
-                const data = await response.json();
-                console.log('Moonraker connected:', data);
+                const data = await resolveApiBase();
                 
                 // Now try to load our data
                 await loadSchedules();

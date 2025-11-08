@@ -11,8 +11,6 @@ Performs the following steps:
   - Ensures KlipperScreen.conf exposes menu entries for the new panels.
 """
 
-from __future__ import annotations
-
 import argparse
 import shutil
 import sys
@@ -20,6 +18,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from textwrap import dedent
+from typing import List, Optional
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -35,11 +34,11 @@ PANEL_FILES = ("macro_scheduler.py", "macro_scheduler_editor.py")
 
 @dataclass
 class InstallResult:
-    copied_files: list[str]
-    warnings: list[str]
+    copied_files: List[str]
+    warnings: List[str]
 
 
-def copy_file(src: Path, dst: Path, *, chmod: int | None = 0o644) -> None:
+def copy_file(src: Path, dst: Path, *, chmod: Optional[int] = 0o644) -> None:
     dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(src, dst)
     if chmod is not None:
@@ -53,7 +52,7 @@ def backup_file(path: Path) -> Path:
     return backup
 
 
-def ensure_moonraker_config(config_path: Path) -> list[str]:
+def ensure_moonraker_config(config_path: Path) -> List[str]:
     if not config_path.exists():
         return [f"moonraker.conf not found at {config_path} (skipped automatic config)"]
 
@@ -88,7 +87,7 @@ def ensure_moonraker_config(config_path: Path) -> list[str]:
     return []
 
 
-def ensure_klipperscreen_config(config_path: Path) -> list[str]:
+def ensure_klipperscreen_config(config_path: Path) -> List[str]:
     if not config_path.exists():
         return [f"KlipperScreen.conf not found at {config_path} (skipped panel menu entries)"]
 
@@ -130,8 +129,8 @@ def ensure_klipperscreen_config(config_path: Path) -> list[str]:
 
 
 def install(dry_run: bool = False) -> InstallResult:
-    copied: list[str] = []
-    warnings: list[str] = []
+    copied: List[str] = []
+    warnings: List[str] = []
 
     if dry_run:
         print("Running in dry-run mode. No files will be modified.\n")

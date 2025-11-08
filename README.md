@@ -12,6 +12,7 @@ A powerful scheduling system for Klipper 3D printers that allows you to schedule
 - **Web UI**: Easy-to-use interface for managing schedules
 - **KlipperScreen Panels**: Touch-friendly viewer and editor panels install automatically
 - **One-Command Install**: `install.py` deploys the component, UI, and panels with backups
+- **Legacy OS Ready**: Installer runs on Raspberry Pi OS Bullseye (Python 3.8) through Debian Trixie
 - **Status Tracking**: See next run times and execution history
 - **Auto-Start**: Schedules resume automatically after Moonraker restarts
 
@@ -24,7 +25,7 @@ A powerful scheduling system for Klipper 3D printers that allows you to schedule
 - Web browser access to your printer
 - Mainsail
 - (Optional) KlipperScreen 0.3+ if you want native touchscreen panels
-- Python 3.8+ (preinstalled on standard Klipper images)
+- Python 3.8+ (works on Raspberry Pi OS Bullseye) through Python 3.12 (Debian Trixie)
 
 ### Recommended: Automated Install via `install.py`
 
@@ -128,6 +129,7 @@ Open your browser and navigate to:
 ```
 http://your-printer-ip/scheduler.html
 ```
+If you are hosting the HTML from a different origin, append `?api_base=http://printer-hostname:7125` so the page knows which Moonraker instance to call. Mainsail deployments automatically use the same origin, so no query parameter is needed in the common case.
 
 ## KlipperScreen Panel
 
@@ -676,6 +678,10 @@ This project is licensed under the GNU GPLv3 License.
 - **Discord**: [Klipper Discord](https://discord.gg/klipper)
 
 ## Changelog
+
+### v0.1.6 (2025-11-08)
+- Installer compatibility fix for legacy Raspberry Pi OS (Bullseye / Python 3.8)
+- Documented the `?api_base=` override for alternate hosting setups
 
 ### v0.1.5 (2025-10-16)
 - Added first-class KlipperScreen support with viewer and editor panels
