@@ -10,6 +10,8 @@ A powerful scheduling system for Klipper 3D printers that allows you to schedule
 - **Macro Parameters**: Pass parameters to scheduled macros
 - **Persistent Storage**: Schedules survive reboots
 - **Web UI**: Easy-to-use interface for managing schedules
+- **KlipperScreen Panels**: Touch-friendly viewer and editor panels install automatically
+- **One-Command Install**: `install.py` deploys the component, UI, and panels with backups
 - **Status Tracking**: See next run times and execution history
 - **Auto-Start**: Schedules resume automatically after Moonraker restarts
 
@@ -21,9 +23,10 @@ A powerful scheduling system for Klipper 3D printers that allows you to schedule
 - Moonraker API server running
 - Web browser access to your printer
 - Mainsail
+- (Optional) KlipperScreen 0.3+ if you want native touchscreen panels
 - Python 3.8+ (preinstalled on standard Klipper images)
 
-### Git Installation
+### Recommended: Automated Install via `install.py`
 
 ```Bash
 # SSH into your printer
@@ -33,10 +36,13 @@ git clone https://github.com/darkoperator/Klipper-Macro-Scheduler.git macro_sche
 
 # Run installer
 cd macro_scheduler/
-python install.py
+python3 install.py
 ```
-The installer copies the Moonraker component, web UI, and KlipperScreen panels, and appends the required entries to `moonraker.conf` and `KlipperScreen.conf` when they are missing (backups are created automatically).
-### Manual Installation
+The Python installer validates dependencies, copies the Moonraker component, web UI, and KlipperScreen panels, and appends the required entries to `moonraker.conf` and `KlipperScreen.conf` when they are missing (backups are created automatically). Re-run `python3 install.py` any time you pull updates and want to redeploy everything in one step.
+
+> **Already installed via `install.sh`?** Earlier releases relied on Moonraker running `install.sh`. After pulling the latest code, run `python3 install.py` once manually so the new workflow can refresh every file and back up your configs.
+
+### Manual Installation (Only if the Installer Cannot Be Used)
 
 
 
@@ -94,8 +100,9 @@ path: ~/macro_scheduler
 origin: https://github.com/darkoperator/klipper-macro-scheduler.git
 primary_branch: main
 managed_services: moonraker
-install_script: install.sh
+install_script: install.py
 ```
+If you previously configured Update Manager to run `install.sh`, change the `install_script` value to `install.py` and run `python3 install.py` once so the new deployment flow takes effect.
 
 ### Restart Moonraker
 
@@ -670,7 +677,12 @@ This project is licensed under the GNU GPLv3 License.
 
 ## Changelog
 
-### v1.0.0 (2025-10-12)
+### v0.1.5 (2025-10-16)
+- Added first-class KlipperScreen support with viewer and editor panels
+- Switched to the automated `install.py` workflow for deploying all assets
+- Updated documentation to reflect the simplified install path and panel usage
+
+### v0.1.0 (2025-10-12)
 - Initial release
 - Support for 5 schedule types
 - Web UI interface
