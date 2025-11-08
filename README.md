@@ -21,6 +21,7 @@ A powerful scheduling system for Klipper 3D printers that allows you to schedule
 - Moonraker API server running
 - Web browser access to your printer
 - Mainsail
+- Python 3.8+ (preinstalled on standard Klipper images)
 
 ### Git Installation
 
@@ -30,10 +31,11 @@ ssh pi@your-printer-ip
 # Clone Repo in to macro_scheduler folder
 git clone https://github.com/darkoperator/Klipper-Macro-Scheduler.git macro_scheduler
 
-# Run install Script
+# Run installer
 cd macro_scheduler/
-bash install.sh
+python install.py
 ```
+The installer copies the Moonraker component, web UI, and KlipperScreen panels, and appends the required entries to `moonraker.conf` and `KlipperScreen.conf` when they are missing (backups are created automatically).
 ### Manual Installation
 
 
@@ -119,6 +121,30 @@ Open your browser and navigate to:
 ```
 http://your-printer-ip/scheduler.html
 ```
+
+## KlipperScreen Panel
+
+`install.py` automatically deploys two KlipperScreen panels and patches your configuration files:
+
+- `Macro Scheduler` lists existing schedules and lets you enable/disable/delete them.
+- `Macro Scheduler Editor` provides the touch-friendly creation form (date picker, hour/minute toggles, AM/PM buttons, weekday selectors).
+
+After running the installer:
+
+1. Restart KlipperScreen (`sudo systemctl restart KlipperScreen`) or reboot the display so it loads the new panels.
+2. If no menu entries exist yet, the installer appends the following to `KlipperScreen.conf`:
+   ```ini
+   [menu __main macro_scheduler]
+   name: Macro Scheduler
+   panel: macro_scheduler
+   icon: clock
+
+   [menu __main macro_scheduler_editor]
+   name: Macro Scheduler Editor
+   panel: macro_scheduler_editor
+   icon: clock
+   ```
+3. The editor panel opens with blank fields each time you tap **New**, and the weekly schedule view supports selecting multiple weekdays via highlighted toggle buttons.
 
 ## Schedule Types
 

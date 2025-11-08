@@ -252,19 +252,26 @@ class MacroScheduler:
         time_parts = time_str.split(":")
         hour, minute = int(time_parts[0]), int(time_parts[1])
         
-        for i in range(7):
-            check_date = now + timedelta(days=i)
-            if check_date.weekday() in days:
-                next_run = check_date.replace(
-                    hour=hour, 
-                    minute=minute, 
-                    second=0, 
-                    microsecond=0
-                )
-                if next_run > now:
-                    return next_run.isoformat()
+        next_run = None
+        for weekday in sorted(set(days)):
+            delta_days = (weekday - now.weekday()) % 7
+            candidate_date = now + timedelta(days=delta_days)
+            candidate = candidate_date.replace(
+                hour=hour,
+                minute=minute,
+                second=0,
+                microsecond=0
+            )
+            if candidate <= now:
+                candidate += timedelta(days=7)
+            if not next_run or candidate < next_run:
+                next_run = candidate
         
-        return now.isoformat()
+        if next_run:
+            return next_run.isoformat()
+        
+        # Fallback shouldn't be reached, but ensure we always return a future run
+        return self._calculate_next_daily_run(time_str)
     
     def _calculate_next_interval_run(self, interval_minutes: int) -> str:
         """Calculate next run time for interval-based schedule"""
