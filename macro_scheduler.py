@@ -3,7 +3,7 @@
 #
 # Copyright (C) 2025 Carlos Perez <carlos_perez@darkoperator.com>
 #
-# This file may be distributed under the terms of the GNU GPLv2 license.
+# This file may be distributed under the terms of the GNU GPLv3 license.
 
 import asyncio
 import logging

@@ -728,6 +728,8 @@ Fixes:
 
 Added automated tests and CI.
 
+The project is now licensed under GPLv3, to match Moonraker and Klipper. Earlier releases were published under Apache 2.0, and remain available under those terms.
+
 ### v0.1.6 (2025-11-08)
 - Installer compatibility fix for legacy Raspberry Pi OS (Bullseye / Python 3.8)
 - Documented the `?api_base=` override for alternate hosting setups

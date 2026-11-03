@@ -1,3 +1,10 @@
+# macro_scheduler_editor.py
+# KlipperScreen panel for the Klipper Macro Scheduler
+#
+# Copyright (C) 2025 Carlos Perez <carlos_perez@darkoperator.com>
+#
+# This file may be distributed under the terms of the GNU GPLv3 license.
+
 import logging
 from datetime import datetime, date, timedelta
 from typing import Any, Dict, Optional

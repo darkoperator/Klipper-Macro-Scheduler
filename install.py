@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (C) 2025 Carlos Perez <carlos_perez@darkoperator.com>
+#
+# This file may be distributed under the terms of the GNU GPLv3 license.
 """
 Klipper Macro Scheduler installer.
 
