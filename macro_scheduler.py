@@ -11,7 +11,7 @@ import re
 from datetime import date, datetime, timedelta
 from typing import Any, Callable, Dict, List, Optional, Set
 
-VERSION = "0.2.0"
+VERSION = "0.2.1"
 
 # Longest the scheduler goes without re-reading the wall clock. A Pi has no
 # real-time clock, so the time can jump when NTP syncs after boot; a long sleep

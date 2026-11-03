@@ -8,7 +8,8 @@ Klipper Macro Scheduler installer.
 Links the Moonraker component, web UI and KlipperScreen panels to this checkout,
 so a `git pull` or an Update Manager update takes effect after a service
 restart. Also adds the required entries to moonraker.conf and
-KlipperScreen.conf, backing up each file it changes.
+KlipperScreen.conf, backing up each file it changes, and adds a Git hook so
+it runs again after each Update Manager update.
 
 Run it again at any time; it only changes what is out of place. For a setup
 with several printers, run it once per instance with --config-dir.
@@ -17,6 +18,7 @@ with several printers, run it once per instance with --config-dir.
 import argparse
 import os
 import re
+import shlex
 import shutil
 import sys
 from dataclasses import dataclass, field
@@ -96,6 +98,84 @@ def exclude_from_repo(repo: Path, relative_path: str, report: Report) -> None:
     if current and not current.endswith("\n"):
         current += "\n"
     exclude.write_text(current + relative_path + "\n")
+
+
+HOOK_MARKER = "# Added by Klipper Macro Scheduler's install.py."
+HOOK_HEADER = (
+    "#!/bin/sh\n"
+    f"{HOOK_MARKER}\n"
+    "# Moonraker's Update Manager runs `git pull` here but never runs install\n"
+    "# scripts, so Git runs this after each update to re-run the installer.\n"
+    "# One line per printer instance; delete a line to stop updating it.\n"
+)
+
+
+def installer_command(paths: Paths) -> List[str]:
+    """The command that repeats this install, with every path made absolute."""
+    command = [
+        sys.executable, str(SCRIPT_DIR / "install.py"),
+        "--config-dir", str(paths.config.resolve()),
+        "--moonraker-dir", str(paths.moonraker.resolve()),
+        "--klipperscreen-dir", str(paths.klipperscreen.resolve()),
+    ]
+    # Default web folders are looked up again each time, so a web client
+    # installed later is picked up.
+    if paths.web_explicit:
+        for web_dir in paths.web:
+            command += ["--web-dir", str(web_dir.resolve())]
+    return command
+
+
+def config_dir_of(line: str) -> Optional[str]:
+    try:
+        words = shlex.split(line)
+    except ValueError:
+        return None
+    if "--config-dir" in words[:-1]:
+        return words[words.index("--config-dir") + 1]
+    return None
+
+
+def install_update_hook(paths: Paths, report: Report) -> None:
+    """Have Git re-run the installer after Moonraker updates this repo.
+
+    Moonraker updates with `git pull`, which runs post-merge. Recovery and
+    rollback use `git reset --hard`, which doesn't; the next normal update
+    catches up.
+    """
+    git_dir = SCRIPT_DIR / ".git"
+    if not git_dir.is_dir():
+        return
+    hook = git_dir / "hooks" / "post-merge"
+    command = installer_command(paths)
+    line = " ".join(shlex.quote(word) for word in command)
+
+    current = hook.read_text() if hook.exists() else None
+    if current is not None and HOOK_MARKER not in current:
+        report.warnings.append(
+            f"{hook} already exists and wasn't written by this installer, so it was "
+            "left alone and updates won't re-run the installer. To fix, add this "
+            f"line to it:\n      {line}"
+        )
+        return
+
+    config_dir = str(paths.config.resolve())
+    kept = []
+    if current is not None:
+        kept = [
+            existing for existing in current.splitlines()
+            if existing.strip() and not existing.startswith("#")
+            and config_dir_of(existing) != config_dir
+        ]
+    updated = HOOK_HEADER + "".join(f"{existing}\n" for existing in kept + [line])
+    if updated == current:
+        return
+    report.actions.append(f"Write update hook {hook}")
+    if report.dry_run:
+        return
+    hook.parent.mkdir(exist_ok=True)
+    hook.write_text(updated)
+    hook.chmod(0o755)
 
 
 def has_section(text: str, name: str) -> bool:
@@ -283,6 +363,7 @@ def install(paths: Paths, dry_run: bool) -> Report:
         )
 
     update_moonraker_config(paths, web_dirs, report)
+    install_update_hook(paths, report)
     return report
 
 

@@ -42,6 +42,8 @@ python3 install.py
 ```
 The installer links the Moonraker component, web UI, and KlipperScreen panels to this folder, so later updates take effect after a service restart. It also adds any missing entries to `moonraker.conf` and `KlipperScreen.conf`, backing up each file it changes. It finds Mainsail and Fluidd automatically, and is safe to run again.
 
+Moonraker's Update Manager pulls updates with `git pull` but never runs install scripts. So the installer adds a Git `post-merge` hook to this folder that runs it again after each update, with the same paths, once per printer instance. If you already have a `post-merge` hook, the installer leaves it alone and prints the line to add. The hook doesn't run when Moonraker recovers or rolls back the repo, or when it runs in debug mode; the next normal update catches up.
+
 Preview the changes first with `python3 install.py --dry-run`.
 
 If your folders aren't in the default locations, or you run several printers on one host, run it once per instance and set the paths:
@@ -51,7 +53,7 @@ python3 install.py --config-dir ~/printer_2_data/config
 python3 install.py --moonraker-dir ~/moonraker --klipperscreen-dir ~/KlipperScreen --web-dir ~/mainsail
 ```
 
-> **Upgrading from v0.1.x?** Run `python3 install.py` once after updating. Earlier versions copied their files, and Moonraker doesn't run install scripts, so an update alone leaves the old copies in use. See the [v0.2.0 changelog](#v020-2026-11-02) for the behavior changes.
+> **Upgrading from v0.1.x?** Run `python3 install.py` once after updating. Later updates run it for you. Earlier versions copied their files, and Moonraker doesn't run install scripts, so an update alone leaves the old copies in use. See the [v0.2.0 changelog](#v020-2026-11-02) for the behavior changes.
 
 ### Manual Installation (Only if the Installer Cannot Be Used)
 
@@ -134,7 +136,7 @@ tail -f ~/printer_data/logs/moonraker.log | grep -i scheduler
 
 You should see:
 ```
-Macro Scheduler 0.2.0 Component Initialized
+Macro Scheduler 0.2.1 Component Initialized
 Macro Scheduler is ready
 ```
 
@@ -704,6 +706,10 @@ This project is licensed under the GNU GPLv3 License.
 - **Discord**: [Klipper Discord](https://discord.gg/klipper)
 
 ## Changelog
+
+### v0.2.1 (2026-11-03)
+
+- The installer adds a Git hook that runs it again after each Update Manager update, so new files and config entries in later versions are set up without running it by hand. Run `python3 install.py` once to add the hook.
 
 ### v0.2.0 (2026-11-02)
 

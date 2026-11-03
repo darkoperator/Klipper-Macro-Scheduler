@@ -1,5 +1,7 @@
 import configparser
 import os
+import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -8,7 +10,16 @@ from pathlib import Path
 
 from helpers import ROOT
 
-INSTALLER = ROOT / "install.py"
+REPO_FILES = (
+    "install.py", "install.sh", "macro_scheduler.py", "scheduler_ui.html",
+    "klipperscreen/panels/macro_scheduler.py",
+    "klipperscreen/panels/macro_scheduler_editor.py",
+)
+GIT_ENV = {
+    "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.com",
+    "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.com",
+    "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_SYSTEM": os.devnull,
+}
 MAINSAIL_SECTION = (
     "[update_manager mainsail]\ntype: web\nchannel: stable\n"
     "repo: mainsail-crew/mainsail\npath: ~/mainsail\n"
@@ -33,11 +44,23 @@ class InstallCase(unittest.TestCase):
         self.moonraker_conf.write_text("[server]\nhost: 0.0.0.0\n\n" + MAINSAIL_SECTION)
         self.ks_conf = self.config / "KlipperScreen.conf"
         self.ks_conf.write_text("[main]\n")
+        # A copy of this checkout, so the installer's update hook lands in the
+        # temporary folder instead of the developer's own .git.
+        self.repo = self.home / "macro_scheduler"
+        self.copy_repo_files(self.repo)
+        (self.repo / ".git" / "hooks").mkdir(parents=True)
+        self.hook = self.repo / ".git" / "hooks" / "post-merge"
+
+    @staticmethod
+    def copy_repo_files(dest):
+        for name in REPO_FILES:
+            (dest / name).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(str(ROOT / name), str(dest / name))
 
     def run_installer(self, *args, check=True):
         env = dict(os.environ, HOME=str(self.home), PYTHONDONTWRITEBYTECODE="1")
         result = subprocess.run(
-            [sys.executable, str(INSTALLER), *args],
+            [sys.executable, str(self.repo / "install.py"), *args],
             env=env, capture_output=True, text=True,
         )
         if check:
@@ -62,7 +85,7 @@ class Deployment(InstallCase):
         ]:
             with self.subTest(link=link):
                 self.assertTrue(link.is_symlink())
-                self.assertEqual(link.resolve(), (ROOT / source).resolve())
+                self.assertEqual(link.resolve(), (self.repo / source).resolve())
 
     def test_copies_from_an_older_install_are_replaced(self):
         old = self.components / "macro_scheduler.py"
@@ -330,12 +353,107 @@ class DryRun(InstallCase):
         self.assertIn("moonraker.conf", result.stdout)
 
 
+class UpdateHook(InstallCase):
+    """Moonraker updates with `git pull` and never runs install scripts, so a
+    post-merge hook in this repo re-runs the installer after each update."""
+
+    def hook_lines(self):
+        return [line for line in self.hook.read_text().splitlines()
+                if "install.py" in line and not line.startswith("#")]
+
+    def test_hook_is_installed_and_executable(self):
+        self.run_installer()
+        self.assertTrue(self.hook.is_file())
+        self.assertTrue(os.stat(str(self.hook)).st_mode & stat.S_IXUSR)
+        self.assertEqual(len(self.hook_lines()), 1)
+        self.assertIn(str(self.config), self.hook_lines()[0])
+
+    def test_hook_repeats_the_install_with_the_same_paths(self):
+        moonraker = self.home / "other_moonraker"
+        (moonraker / "moonraker" / "components").mkdir(parents=True)
+        web = self.home / "custom_web"
+        web.mkdir()
+        self.run_installer("--moonraker-dir", str(moonraker), "--web-dir", str(web))
+        line = self.hook_lines()[0]
+        self.assertIn(str(moonraker), line)
+        self.assertIn(str(web), line)
+        self.assertNotIn("--dry-run", line)
+
+    def test_default_web_folders_are_looked_up_again_on_each_update(self):
+        self.run_installer()
+        self.assertNotIn("--web-dir", self.hook_lines()[0])
+
+    def test_each_printer_instance_gets_its_own_line(self):
+        other = self.home / "printer_2_data" / "config"
+        other.mkdir(parents=True)
+        (other / "moonraker.conf").write_text("[server]\n")
+        self.run_installer()
+        self.run_installer("--config-dir", str(other))
+        self.run_installer("--config-dir", str(other))
+        lines = self.hook_lines()
+        self.assertEqual(len(lines), 2)
+        self.assertTrue(any(str(other) in line for line in lines))
+
+    def test_reinstalling_an_instance_with_new_paths_replaces_its_line(self):
+        web = self.home / "custom_web"
+        web.mkdir()
+        self.run_installer()
+        self.run_installer("--web-dir", str(web))
+        lines = self.hook_lines()
+        self.assertEqual(len(lines), 1)
+        self.assertIn(str(web), lines[0])
+
+    def test_someone_elses_hook_is_left_alone_with_a_warning(self):
+        self.hook.write_text("#!/bin/sh\necho mine\n")
+        result = self.run_installer()
+        self.assertEqual(self.hook.read_text(), "#!/bin/sh\necho mine\n")
+        self.assertIn("post-merge", result.stdout)
+
+    def test_not_a_git_checkout_is_skipped_quietly(self):
+        shutil.rmtree(str(self.repo / ".git"))
+        result = self.run_installer()
+        self.assertFalse((self.repo / ".git").exists())
+        self.assertNotIn("post-merge", result.stdout)
+
+    def test_dry_run_does_not_write_the_hook(self):
+        result = self.run_installer("--dry-run")
+        self.assertFalse(self.hook.exists())
+        self.assertIn("post-merge", result.stdout)
+
+    @unittest.skipIf(shutil.which("git") is None, "git not installed")
+    def test_git_pull_reruns_the_installer(self):
+        env = dict(os.environ, HOME=str(self.home), PYTHONDONTWRITEBYTECODE="1", **GIT_ENV)
+
+        def git(cwd, *args):
+            subprocess.run(["git", *args], cwd=str(cwd), env=env, check=True,
+                           capture_output=True)
+
+        upstream = self.home / "upstream"
+        self.copy_repo_files(upstream)
+        git(upstream, "init", "-q", "-b", "main")
+        git(upstream, "add", "-A")
+        git(upstream, "commit", "-q", "-m", "v1")
+        shutil.rmtree(str(self.repo))
+        git(self.home, "clone", "-q", str(upstream), str(self.repo))
+
+        self.run_installer()
+        link = self.components / "macro_scheduler.py"
+        link.unlink()
+        (upstream / "README.md").write_text("v2\n")
+        git(upstream, "add", "-A")
+        git(upstream, "commit", "-q", "-m", "v2")
+        git(self.repo, "pull", "-q", "--ff-only")
+
+        self.assertTrue(link.is_symlink())
+        self.assertEqual(link.resolve(), (self.repo / "macro_scheduler.py").resolve())
+
+
 class LegacyScript(InstallCase):
     def test_install_sh_delegates_to_install_py(self):
-        script = (ROOT / "install.sh").read_text()
+        script = (self.repo / "install.sh").read_text()
         self.assertIn("install.py", script)
         env = dict(os.environ, HOME=str(self.home), PYTHONDONTWRITEBYTECODE="1")
-        subprocess.run(["bash", str(ROOT / "install.sh")], env=env, check=True, capture_output=True)
+        subprocess.run(["bash", str(self.repo / "install.sh")], env=env, check=True, capture_output=True)
         self.assertTrue((self.components / "macro_scheduler.py").is_symlink())
 
 
