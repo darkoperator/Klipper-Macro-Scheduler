@@ -192,6 +192,14 @@
             margin-top: 8px;
         }
 
+        .last-result {
+            margin-top: 4px;
+        }
+
+        .last-result.problem {
+            color: #f59e0b;
+        }
+
         /* Modal Styles */
         .modal {
             display: none;
@@ -406,6 +414,7 @@
                     <strong>Examples:</strong><br>
                     • <code style="background: #0f172a; padding: 2px 4px; border-radius: 3px;">0 9 * * 1</code> - Every Monday at 9:00 AM<br>
                     • <code style="background: #0f172a; padding: 2px 4px; border-radius: 3px;">30 14 * * 1,3,5</code> - Mon, Wed, Fri at 2:30 PM<br>
+                    • <code style="background: #0f172a; padding: 2px 4px; border-radius: 3px;">0 9 * * 1-5</code> - Weekdays at 9:00 AM<br>
                     • <code style="background: #0f172a; padding: 2px 4px; border-radius: 3px;">0 */3 * * *</code> - Every 3 hours<br>
                     • <code style="background: #0f172a; padding: 2px 4px; border-radius: 3px;">0 0 * * *</code> - Daily at midnight
                 </small>
@@ -415,6 +424,22 @@
                 <label>Parameters (JSON)</label>
                 <textarea id="scheduleParams" rows="4" placeholder='{"TEMP": 60, "SPEED": 100}'>{}</textarea>
                 <small style="color: #64748b;">Optional: Add macro parameters as JSON</small>
+            </div>
+
+            <div class="form-group">
+                <label>If a Run Is Missed</label>
+                <select id="scheduleMissed">
+                    <option value="skip">Skip it and wait for the next run</option>
+                    <option value="run">Run it as soon as possible</option>
+                </select>
+                <small style="color: #64748b;">A run is missed if the printer was off or Klipper was not ready.</small>
+            </div>
+
+            <div class="form-group">
+                <label style="display: flex; align-items: center; gap: 5px; cursor: pointer;">
+                    <input type="checkbox" id="scheduleSkipPrinting" checked> Skip while printing or paused
+                </label>
+                <small style="color: #64748b;">Turn this off for macros meant to run during a print, such as lights.</small>
             </div>
 
             <div class="form-actions">
@@ -441,7 +466,27 @@
             }
         }
 
-        pushCandidate(apiOverride);
+        // The override may only change the port: a crafted link must not be able
+        // to point this page at someone else's server. A page opened from a local
+        // file has no printer of its own, so it may name any host.
+        function isAllowedApiBase(value) {
+            let url;
+            try {
+                url = new URL(value);
+            } catch (error) {
+                return false;
+            }
+            if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+                return false;
+            }
+            return window.location.protocol === 'file:' || url.hostname === window.location.hostname;
+        }
+
+        if (apiOverride && isAllowedApiBase(apiOverride)) {
+            pushCandidate(apiOverride);
+        } else if (apiOverride) {
+            console.warn('Ignoring api_base: it must be on the same host as this page');
+        }
         pushCandidate(window.location.origin);
         pushCandidate(`${window.location.protocol}//${window.location.hostname}:${FALLBACK_PORT}`);
 
@@ -450,6 +495,32 @@
         
         let schedules = [];
         let macros = [];
+
+        const AUTH_HELP = 'Moonraker refused this request because it requires authorization. '
+            + 'Add this device to trusted_clients in the [authorization] section of moonraker.conf.';
+        const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+        function escapeHtml(value) {
+            return String(value)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        // Returns the message to show for a failed response.
+        async function describeFailure(response) {
+            if (response.status === 401 || response.status === 403) {
+                return AUTH_HELP;
+            }
+            try {
+                const data = await response.json();
+                return data.error?.message || `Request failed (${response.status})`;
+            } catch (error) {
+                return `Request failed (${response.status})`;
+            }
+        }
 
         // Initialize
         document.addEventListener('DOMContentLoaded', () => {
@@ -460,12 +531,14 @@
             for (const candidate of apiCandidates) {
                 try {
                     const response = await fetch(`${candidate}/server/info`);
-                    if (!response.ok) {
+                    // A refusal still means Moonraker is here. loadSchedules reports it.
+                    const refused = response.status === 401 || response.status === 403;
+                    if (!response.ok && !refused) {
                         continue;
                     }
                     API_BASE = candidate;
                     console.log('Moonraker connected via:', API_BASE);
-                    return await response.json();
+                    return refused ? {} : await response.json();
                 } catch (error) {
                     console.warn(`Failed to reach Moonraker at ${candidate}`, error);
                 }
@@ -499,34 +572,47 @@
 
         // API Functions
         async function loadSchedules() {
+            const container = document.getElementById('schedules-container');
             try {
                 const response = await fetch(`${API_BASE}/server/macro_scheduler/schedules`);
-                
-                // Check if response is JSON
+
                 const contentType = response.headers.get('content-type');
-                if (!contentType || !contentType.includes('application/json')) {
-                    throw new Error('Component not loaded. Did you add [macro_scheduler] to moonraker.conf and restart?');
+                const isJson = contentType && contentType.includes('application/json');
+                if (response.status === 404 || !isJson) {
+                    showSetupHelp();
+                    return;
                 }
-                
+                if (!response.ok) {
+                    throw new Error(await describeFailure(response));
+                }
+
                 const data = await response.json();
                 schedules = data.result?.schedules || [];
                 renderSchedules();
             } catch (error) {
                 console.error('Error loading schedules:', error);
-                document.getElementById('schedules-container').innerHTML = `
+                container.innerHTML = `
                     <div class="empty-state">
-                        <h3>⚠️ Scheduler Component Not Active</h3>
-                        <p style="color: #64748b; margin-top: 10px;">
-                            ${error.message}<br><br>
-                            <strong>Setup Steps:</strong><br>
-                            1. Make sure macro_scheduler.py is in ~/moonraker/moonraker/components/<br>
-                            2. Add [macro_scheduler] to moonraker.conf<br>
-                            3. Restart Moonraker<br>
-                            4. Check logs: tail -f ~/printer_data/logs/moonraker.log
-                        </p>
+                        <h3>⚠️ Unable to load schedules</h3>
+                        <p style="color: #64748b; margin-top: 10px;">${escapeHtml(error.message)}</p>
                     </div>
                 `;
             }
+        }
+
+        function showSetupHelp() {
+            document.getElementById('schedules-container').innerHTML = `
+                <div class="empty-state">
+                    <h3>⚠️ Scheduler Component Not Active</h3>
+                    <p style="color: #64748b; margin-top: 10px;">
+                        <strong>Setup Steps:</strong><br>
+                        1. Run python3 install.py from the macro_scheduler folder<br>
+                        2. Make sure [macro_scheduler] is in moonraker.conf<br>
+                        3. Restart Moonraker<br>
+                        4. Check logs: tail -f ~/printer_data/logs/moonraker.log
+                    </p>
+                </div>
+            `;
         }
 
         async function loadMacros() {
@@ -563,7 +649,7 @@
             } catch (error) {
                 console.error('Error loading macros:', error);
                 // Fallback to basic macros
-                macros = ['PAUSE', 'RESUME', 'CANCEL_PRINT', 'TEST_MACRO'];
+                macros = ['PAUSE', 'RESUME', 'CANCEL_PRINT'];
                 updateMacroSelect();
             }
         }
@@ -584,6 +670,8 @@
             const macro = document.getElementById('scheduleMacro').value;
             const scheduleType = document.getElementById('scheduleType').value;
             const paramsText = document.getElementById('scheduleParams').value;
+            const missedRunPolicy = document.getElementById('scheduleMissed').value;
+            const skipIfPrinting = document.getElementById('scheduleSkipPrinting').checked;
 
             if (!name || !macro) {
                 alert('Please fill in name and macro');
@@ -602,7 +690,9 @@
                 name,
                 macro,
                 schedule_type: scheduleType,
-                params
+                params,
+                missed_run_policy: missedRunPolicy,
+                skip_if_printing: skipIfPrinting
             };
 
             // Get schedule-type specific values
@@ -649,7 +739,7 @@
                     return;
                 }
                 // Basic validation - should have 5 parts
-                if (cron.split(' ').length !== 5) {
+                if (cron.split(/\s+/).length !== 5) {
                     alert('Invalid cron expression. Format: minute hour day month weekday\nExample: 0 9 * * 1');
                     return;
                 }
@@ -668,8 +758,7 @@
                     closeAddModal();
                     loadSchedules();
                 } else {
-                    const error = await response.json();
-                    alert('Error adding schedule: ' + (error.error?.message || 'Unknown error'));
+                    alert('Error adding schedule: ' + await describeFailure(response));
                 }
             } catch (error) {
                 console.error('Error adding schedule:', error);
@@ -677,34 +766,32 @@
             }
         }
 
-        async function toggleSchedule(id) {
+        async function postAction(action, id) {
             try {
-                await fetch(`${API_BASE}/server/macro_scheduler/toggle`, {
+                const response = await fetch(`${API_BASE}/server/macro_scheduler/${action}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ id })
                 });
-                loadSchedules();
+                if (!response.ok) {
+                    alert(await describeFailure(response));
+                }
             } catch (error) {
-                console.error('Error toggling schedule:', error);
+                console.error(`Error sending ${action}:`, error);
+                alert(`Unable to reach Moonraker: ${error.message}`);
             }
+            loadSchedules();
+        }
+
+        async function toggleSchedule(id) {
+            await postAction('toggle', id);
         }
 
         async function deleteSchedule(id) {
             if (!confirm('Are you sure you want to delete this schedule?')) {
                 return;
             }
-
-            try {
-                await fetch(`${API_BASE}/server/macro_scheduler/delete`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ id })
-                });
-                loadSchedules();
-            } catch (error) {
-                console.error('Error deleting schedule:', error);
-            }
+            await postAction('delete', id);
         }
 
         // UI Functions
@@ -734,7 +821,7 @@
                     <div class="schedule-header">
                         <div>
                             <div class="schedule-title">
-                                ${schedule.name}
+                                ${escapeHtml(schedule.name)}
                                 <span class="badge ${schedule.enabled ? 'badge-success' : 'badge-inactive'}">
                                     ${schedule.enabled ? 'Active' : 'Inactive'}
                                 </span>
@@ -742,34 +829,35 @@
                             <div class="schedule-details">
                                 <div class="schedule-detail">
                                     <span>▶</span>
-                                    <code>${schedule.macro}</code>
+                                    <code>${escapeHtml(schedule.macro)}</code>
                                 </div>
                                 <div class="schedule-detail">
                                     <span>🕐</span>
-                                    <span>${formatScheduleTime(schedule)}</span>
+                                    <span>${escapeHtml(formatScheduleTime(schedule))}</span>
                                 </div>
                                 ${Object.keys(schedule.params || {}).length > 0 ? `
                                     <div class="schedule-detail">
                                         <span>⚙</span>
-                                        <code style="font-size: 12px;">${JSON.stringify(schedule.params)}</code>
+                                        <code style="font-size: 12px;">${escapeHtml(JSON.stringify(schedule.params))}</code>
                                     </div>
                                 ` : ''}
                                 ${schedule.enabled && schedule.next_run ? `
                                     <div class="next-run">
-                                        Next run: ${formatDateTime(schedule.next_run)}
+                                        Next run: ${escapeHtml(formatDateTime(schedule.next_run))}
                                     </div>
                                 ` : ''}
+                                ${renderLastResult(schedule)}
                             </div>
                         </div>
                         <div class="schedule-actions">
                             <button 
                                 class="btn btn-small ${schedule.enabled ? 'btn-warning' : 'btn-success'}"
-                                onclick="toggleSchedule(${schedule.id})">
+                                onclick="toggleSchedule(${Number(schedule.id)})">
                                 ${schedule.enabled ? 'Disable' : 'Enable'}
                             </button>
                             <button 
                                 class="btn btn-small btn-danger"
-                                onclick="deleteSchedule(${schedule.id})">
+                                onclick="deleteSchedule(${Number(schedule.id)})">
                                 Delete
                             </button>
                         </div>
@@ -778,13 +866,36 @@
             `).join('');
         }
 
+        function renderLastResult(schedule) {
+            if (!schedule.last_status) {
+                return '';
+            }
+            const problem = schedule.last_status !== 'ok' && schedule.last_status !== 'running';
+            const lastRun = schedule.last_run ? ` (${formatDateTime(schedule.last_run)})` : '';
+            const detail = schedule.last_error ? `: ${schedule.last_error}` : '';
+            return `
+                <div class="last-result ${problem ? 'problem' : ''}">
+                    Last result: ${escapeHtml(schedule.last_status + lastRun + detail)}
+                </div>
+            `;
+        }
+
         function formatScheduleTime(schedule) {
-            if (schedule.schedule_type === 'once') {
-                return `Once on ${formatDateTime(schedule.datetime)}`;
-            } else if (schedule.schedule_type === 'daily') {
-                return `Daily at ${schedule.time}`;
-            } else {
-                return `Weekly at ${schedule.time}`;
+            switch (schedule.schedule_type) {
+                case 'once':
+                    return `Once on ${formatDateTime(schedule.datetime)}`;
+                case 'daily':
+                    return `Daily at ${schedule.time}`;
+                case 'weekly': {
+                    const days = (schedule.days || []).map(day => DAY_NAMES[day]).join(', ');
+                    return `Weekly on ${days} at ${schedule.time}`;
+                }
+                case 'interval':
+                    return `Every ${schedule.interval_minutes} min`;
+                case 'cron':
+                    return `Cron: ${schedule.cron_expression}`;
+                default:
+                    return String(schedule.schedule_type);
             }
         }
 
@@ -812,6 +923,8 @@
             document.getElementById('scheduleInterval').value = '60';
             document.getElementById('scheduleCron').value = '';
             document.getElementById('scheduleParams').value = '{}';
+            document.getElementById('scheduleMissed').value = 'skip';
+            document.getElementById('scheduleSkipPrinting').checked = true;
             
             // Uncheck all day checkboxes
             document.querySelectorAll('.day-checkbox').forEach(cb => cb.checked = false);
