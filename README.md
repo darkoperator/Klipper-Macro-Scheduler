@@ -11,9 +11,10 @@ A powerful scheduling system for Klipper 3D printers that allows you to schedule
 - **Persistent Storage**: Schedules survive reboots
 - **Web UI**: Easy-to-use interface for managing schedules
 - **KlipperScreen Panels**: Touch-friendly viewer and editor panels install automatically
-- **One-Command Install**: `install.py` deploys the component, UI, and panels with backups
+- **One-Command Install**: `install.py` links the component, UI, and panels, and backs up any config it changes
 - **Legacy OS Ready**: Installer runs on Raspberry Pi OS Bullseye (Python 3.8) through Debian Trixie
-- **Status Tracking**: See next run times and execution history
+- **Status Tracking**: See next run times and the result of the last run
+- **Safe Defaults**: Runs missed while the printer was off are skipped, and schedules skip while printing, unless you opt in per schedule
 - **Auto-Start**: Schedules resume automatically after Moonraker restarts
 
 ## Installation Steps
@@ -23,7 +24,7 @@ A powerful scheduling system for Klipper 3D printers that allows you to schedule
 - Klipper firmware installed
 - Moonraker API server running
 - Web browser access to your printer
-- Mainsail
+- Mainsail or Fluidd
 - (Optional) KlipperScreen 0.3+ if you want native touchscreen panels
 - Python 3.8+ (works on Raspberry Pi OS Bullseye) through Python 3.12 (Debian Trixie)
 
@@ -39,9 +40,18 @@ git clone https://github.com/darkoperator/Klipper-Macro-Scheduler.git macro_sche
 cd macro_scheduler/
 python3 install.py
 ```
-The Python installer validates dependencies, copies the Moonraker component, web UI, and KlipperScreen panels, and appends the required entries to `moonraker.conf` and `KlipperScreen.conf` when they are missing (backups are created automatically). Re-run `python3 install.py` any time you pull updates and want to redeploy everything in one step.
+The installer links the Moonraker component, web UI, and KlipperScreen panels to this folder, so later updates take effect after a service restart. It also adds any missing entries to `moonraker.conf` and `KlipperScreen.conf`, backing up each file it changes. It finds Mainsail and Fluidd automatically, and is safe to run again.
 
-> **Already installed via `install.sh`?** Earlier releases relied on Moonraker running `install.sh`. After pulling the latest code, run `python3 install.py` once manually so the new workflow can refresh every file and back up your configs.
+Preview the changes first with `python3 install.py --dry-run`.
+
+If your folders aren't in the default locations, or you run several printers on one host, run it once per instance and set the paths:
+
+```Bash
+python3 install.py --config-dir ~/printer_2_data/config
+python3 install.py --moonraker-dir ~/moonraker --klipperscreen-dir ~/KlipperScreen --web-dir ~/mainsail
+```
+
+> **Upgrading from v0.1.x?** Run `python3 install.py` once after updating. Earlier versions copied their files, and Moonraker doesn't run install scripts, so an update alone leaves the old copies in use. See the [v0.2.0 changelog](#v020-2026-11-02) for the behavior changes.
 
 ### Manual Installation (Only if the Installer Cannot Be Used)
 
@@ -101,9 +111,10 @@ path: ~/macro_scheduler
 origin: https://github.com/darkoperator/klipper-macro-scheduler.git
 primary_branch: main
 managed_services: moonraker
-install_script: install.py
 ```
-If you previously configured Update Manager to run `install.sh`, change the `install_script` value to `install.py` and run `python3 install.py` once so the new deployment flow takes effect.
+Update Manager can only restart Moonraker for this section. After an update that changes the panels, restart KlipperScreen yourself: `sudo systemctl restart KlipperScreen`.
+
+If you installed by hand and use Moonraker to update Mainsail or Fluidd, add `persistent_files: scheduler.html` to that client's `[update_manager ...]` section, or each update will delete the page. The installer does this for you.
 
 ### Restart Moonraker
 
@@ -119,7 +130,7 @@ tail -f ~/printer_data/logs/moonraker.log | grep -i scheduler
 
 You should see:
 ```
-Macro Scheduler Component Initialized
+Macro Scheduler 0.2.0 Component Initialized
 Macro Scheduler is ready
 ```
 
@@ -129,31 +140,42 @@ Open your browser and navigate to:
 ```
 http://your-printer-ip/scheduler.html
 ```
-If you are hosting the HTML from a different origin, append `?api_base=http://printer-hostname:7125` so the page knows which Moonraker instance to call. Mainsail deployments automatically use the same origin, so no query parameter is needed in the common case.
+Pages served by Mainsail or Fluidd use the same origin automatically. If Moonraker is on another port of the same host, append `?api_base=http://printer-hostname:7125`. For safety, `api_base` is ignored if it names a different host, unless you opened the page from a local file.
+
+If Moonraker requires authorization, add your device to `trusted_clients` in the `[authorization]` section of `moonraker.conf`. The page doesn't log in.
 
 ## KlipperScreen Panel
 
-`install.py` automatically deploys two KlipperScreen panels and patches your configuration files:
+`install.py` links two KlipperScreen panels and adds a menu entry:
 
-- `Macro Scheduler` lists existing schedules and lets you enable/disable/delete them.
-- `Macro Scheduler Editor` provides the touch-friendly creation form (date picker, hour/minute toggles, AM/PM buttons, weekday selectors).
+- `Macro Scheduler` lists existing schedules with their next run and last result, and lets you enable, disable, or delete them.
+- The editor panel, opened with **New**, is the creation form. It follows KlipperScreen's 24-hour time setting.
 
 After running the installer:
 
 1. Restart KlipperScreen (`sudo systemctl restart KlipperScreen`) or reboot the display so it loads the new panels.
-2. If no menu entries exist yet, the installer appends the following to `KlipperScreen.conf`:
+2. If no menu entry exists yet, the installer appends the following to `KlipperScreen.conf`:
    ```ini
    [menu __main macro_scheduler]
    name: Macro Scheduler
    panel: macro_scheduler
    icon: clock
-
-   [menu __main macro_scheduler_editor]
-   name: Macro Scheduler Editor
-   panel: macro_scheduler_editor
-   icon: clock
    ```
+   A `macro_scheduler_editor` entry from an earlier version still works, and can be removed.
 3. The editor panel opens with blank fields each time you tap **New**, and the weekly schedule view supports selecting multiple weekdays via highlighted toggle buttons.
+
+## Missed Runs and Printing
+
+Each schedule has two safety settings:
+
+| Setting | Default | Effect |
+|---------|---------|--------|
+| `missed_run_policy` | `skip` | A run more than 2 minutes late, for example because the Pi was off, is recorded as `missed` and not run. With `run`, it runs as soon as Klipper is available. |
+| `skip_if_printing` | `true` | A run due while the printer is printing or paused is recorded as `skipped`. Turn this off for macros meant to run during a print, such as lights. |
+
+Runs that fail are recorded as `failed` and aren't retried. If Moonraker restarts during a macro, the run is recorded as `interrupted` and isn't repeated.
+
+Times are the printer's local time. A daily run in the hour skipped by a daylight saving change comes due when the clock jumps, so it's usually recorded as `missed`.
 
 ## Schedule Types
 
@@ -228,7 +250,7 @@ Execute a macro repeatedly at fixed intervals (in minutes).
 - **Interval:** 60 minutes
 - **Macro:** STATUS_CHECK
 
-**Note:** Interval schedules start immediately upon creation and repeat continuously.
+**Note:** The first run is one interval after the schedule is created.
 
 ### 5. Cron Expression (Advanced)
 
@@ -241,12 +263,16 @@ Use cron-style expressions for complex scheduling patterns.
 - **hour**: 0-23 (24-hour format)
 - **day**: 1-31
 - **month**: 1-12
-- **weekday**: 0-6 (0 = Sunday, 1 = Monday, etc.)
+- **weekday**: 0-7 (0 and 7 = Sunday, 1 = Monday, etc.)
 
 **Special Characters:**
 - `*` = Any value (every minute/hour/day)
 - `*/N` = Every N units (e.g., `*/5` = every 5 minutes)
 - `,` = List separator (e.g., `1,3,5` = Monday, Wednesday, Friday)
+- `-` = Range (e.g., `1-5` = Monday to Friday)
+- `a-b/N` = Every N units within a range
+
+If both day and weekday are restricted, the schedule runs when either matches, as in standard cron. Month and weekday names aren't supported. Invalid expressions are rejected when you add them.
 
 **Common Examples:**
 
@@ -478,10 +504,11 @@ gcode:
 1. Click "Add Schedule" button
 2. Fill in the form:
    - **Schedule Name**: Descriptive name
-   - **Macro**: Select from dropdown
+   - **Macro**: Select from dropdown. This must be a single command name; pass any arguments as parameters.
    - **Schedule Type**: Choose one of the 5 types
    - **Type-specific fields**: Fill based on selected type
    - **Parameters**: Optional JSON object with macro parameters
+   - **If a Run Is Missed** and **Skip while printing**: See [Missed Runs and Printing](#missed-runs-and-printing)
 3. Click "Add Schedule"
 
 ### Managing Schedules
@@ -489,6 +516,7 @@ gcode:
 - **Enable/Disable**: Toggle the button to pause/resume a schedule
 - **Delete**: Remove a schedule permanently
 - **Next Run**: View when the schedule will execute next
+- **Last Result**: See whether the last run worked, and why it didn't if not
 
 ### Parameter Format
 
@@ -586,19 +614,22 @@ cat ~/printer_data/config/moonraker.conf | grep -A2 "\[macro_scheduler\]"
 
 ### UI Not Loading
 
-**Verify file exists:**
+**Verify file exists** (use `~/fluidd` for Fluidd):
 ```bash
 ls -la ~/mainsail/scheduler.html
 ```
+
+If the page disappeared after a web client update, run `python3 install.py` again.
 
 **Check browser console (F12)** for JavaScript errors.
 
 ### Schedule Not Executing
 
 1. Check if schedule is enabled (green badge)
-2. Verify next run time is in the future
-3. Check Moonraker logs during scheduled time
-4. Verify macro exists in Klipper configuration
+2. Check its last result: `missed`, `skipped`, `failed`, and `invalid` each say why it didn't run
+3. Verify next run time is in the future, and that the printer's clock and timezone are right
+4. Check Moonraker logs during scheduled time
+5. Verify macro exists in Klipper configuration
 
 ### Macros Not Listed
 
@@ -625,14 +656,9 @@ sqlite3 ~/printer_data/database/moonraker-sql.db \
 
 ### Backup
 
+The code lives in this repository, so only your schedules need backing up:
+
 ```bash
-# Backup component
-cp ~/moonraker/moonraker/components/macro_scheduler.py \
-   ~/macro_scheduler_backup.py
-
-# Backup UI
-cp ~/mainsail/scheduler.html ~/scheduler_backup.html
-
 # Backup database (includes schedules)
 cp ~/printer_data/database/moonraker-sql.db \
    ~/moonraker-db-backup.db
@@ -641,16 +667,12 @@ cp ~/printer_data/database/moonraker-sql.db \
 ### Restore
 
 ```bash
-# Restore component
-cp ~/macro_scheduler_backup.py \
-   ~/moonraker/moonraker/components/macro_scheduler.py
-
-# Restore UI
-cp ~/scheduler_backup.html ~/mainsail/scheduler.html
-
-# Restart
-sudo systemctl restart moonraker
+sudo systemctl stop moonraker
+cp ~/moonraker-db-backup.db ~/printer_data/database/moonraker-sql.db
+sudo systemctl start moonraker
 ```
+
+Don't copy files over the installed component or page: they are links, so that would overwrite this repository.
 
 ## Contributing
 
@@ -659,7 +681,7 @@ Contributions are welcome! Please:
 1. Fork the repository
 2. Create a feature branch
 3. Make your changes
-4. Test thoroughly
+4. Run the tests: `python3 -m unittest discover -s tests` and `node --test tests/web_ui.test.js`
 5. Submit a pull request
 
 ## License
@@ -678,6 +700,33 @@ This project is licensed under the GNU GPLv3 License.
 - **Discord**: [Klipper Discord](https://discord.gg/klipper)
 
 ## Changelog
+
+### v0.2.0 (2026-11-02)
+
+**Run `python3 install.py` once after updating**, then restart Moonraker and KlipperScreen.
+
+Behavior changes:
+- Runs missed while the printer was off or Klipper wasn't ready are now skipped instead of running at startup. Set `missed_run_policy` to `run` to catch up.
+- Schedules now skip while printing or paused, including existing ones. Turn off `skip_if_printing` for macros meant to run during a print.
+- Re-enabling a schedule works out a new next run instead of firing immediately. A "once" schedule whose time has passed can't be re-enabled.
+- Stored schedules that fail the new checks are disabled on startup and marked `invalid`. This includes a macro field holding a full command such as `M117 hello`.
+- `api_base` is now limited to the page's own host.
+- The installer now links files instead of copying them, and no longer adds a menu entry for the editor panel.
+
+Fixes:
+- KlipperScreen panels work again on current KlipperScreen, which removed the REST client they used. Requests no longer block the screen.
+- Invalid intervals and cron expressions could run a macro nonstop. All input is now validated by the server, including G-code injection through parameters.
+- Cron is rewritten: ranges, lists, weekday 7, and standard day/weekday rules work, and invalid expressions are rejected.
+- Schedules no longer disappear when added before Klipper is ready, and are available without Klipper.
+- Failed saves now return an error instead of reporting success.
+- Macro results are recorded. Each run is saved before it starts, so a restart can't repeat it.
+- A single loop rechecks the clock every 30 seconds, so clock changes after boot no longer delay runs.
+- Fixed stored XSS in the web UI, and misleading display of interval, cron, and authorization errors.
+- `macro_scheduler:executed` now reaches websocket clients, as `notify_macro_scheduler_executed`, and includes the result.
+- KlipperScreen: delete asks for confirmation, the list refreshes when shown, Back works as expected, dates are readable, and the form never defaults to a past time.
+- Installer: `--dry-run` no longer changes config files, the list panel gets its menu entry, Fluidd and multiple instances are supported, missing folders are no longer created, and the web page survives web client updates.
+
+Added automated tests and CI.
 
 ### v0.1.6 (2025-11-08)
 - Installer compatibility fix for legacy Raspberry Pi OS (Bullseye / Python 3.8)

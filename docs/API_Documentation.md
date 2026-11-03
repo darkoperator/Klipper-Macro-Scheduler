@@ -75,14 +75,19 @@ Get all configured schedules.
 | `schedule_type` | string | Type: `once`, `daily`, `weekly`, `interval`, `cron` |
 | `params` | object | Parameters to pass to macro |
 | `enabled` | boolean | Whether schedule is active |
-| `next_run` | string | ISO 8601 datetime of next execution |
+| `next_run` | string or null | ISO 8601 local time of the next execution |
+| `missed_run_policy` | string | `skip` (default) or `run`: what to do with a run more than 2 minutes late |
+| `skip_if_printing` | boolean | Skip runs due while printing or paused. Default `true` |
+| `last_run` | string or null | Local time the macro was last started |
+| `last_status` | string or null | `running`, `ok`, `failed`, `missed`, `skipped`, `interrupted`, or `invalid` |
+| `last_error` | string or null | Why the last run didn't succeed |
 
 **Type-Specific Fields:**
 
-- **once:** `datetime` (ISO 8601 string)
+- **once:** `datetime` (ISO 8601 local time in the future, with no timezone)
 - **daily:** `time` (HH:MM format)
-- **weekly:** `time` (HH:MM), `days` (array of integers 0-6)
-- **interval:** `interval_minutes` (integer)
+- **weekly:** `time` (HH:MM), `days` (non-empty array of integers 0-6)
+- **interval:** `interval_minutes` (whole number, at least 1)
 - **cron:** `cron_expression` (string)
 
 **Example Request:**
@@ -147,9 +152,13 @@ Create a new schedule.
   "name": "Schedule Name",
   "macro": "MACRO_NAME",
   "schedule_type": "once|daily|weekly|interval|cron",
-  "params": {}
+  "params": {},
+  "missed_run_policy": "skip",
+  "skip_if_printing": true
 }
 ```
+
+`macro` must be a single command name. `params` must be an object whose names are letters, digits, and underscores, and whose values are text or numbers with no control characters, `;`, or `"`. `missed_run_policy` and `skip_if_printing` are optional, and default as shown.
 
 ### Schedule Type: Once
 
@@ -307,7 +316,7 @@ curl -X POST http://localhost:7125/server/macro_scheduler/add \
   }'
 ```
 
-**Note:** Interval schedules execute immediately upon creation, then repeat at the specified interval.
+**Note:** The first run is one interval after the schedule is created.
 
 ### Schedule Type: Cron
 
@@ -321,6 +330,8 @@ Execute based on cron expression.
 ```
 
 **Cron Format:** `minute hour day month weekday`
+
+Each field accepts `*`, numbers, ranges (`1-5`), lists (`1,3,5`), and steps on `*` or a range (`*/15`, `8-17/2`). Weekday 0 and 7 both mean Sunday. If both day and weekday are restricted, either match runs the schedule. Names such as `MON` aren't supported, and an invalid expression, or one that can never run, returns a 400 error.
 
 **Complete Example:**
 ```json
@@ -481,7 +492,7 @@ curl -X POST http://localhost:7125/server/macro_scheduler/toggle \
 }
 ```
 
-**Note:** The `enabled` field will be toggled. If it was `true`, it becomes `false`, and vice versa.
+**Note:** The `enabled` field will be toggled. Enabling a schedule works out a new `next_run` from the current time, and never runs the macro immediately. Enabling returns a 400 error if the schedule is invalid, or if it is a `once` schedule whose time has passed.
 
 **Error Response (Not Found):**
 ```json
@@ -541,7 +552,8 @@ gcode:
 |------|-------------|
 | 400 | Bad Request - Invalid parameters or malformed JSON |
 | 404 | Not Found - Schedule ID doesn't exist |
-| 500 | Internal Server Error - Component error |
+| 500 | Internal Server Error - The change could not be saved, and was undone |
+| 503 | Service Unavailable - Stored schedules could not be read |
 
 ---
 
@@ -654,20 +666,24 @@ console.log('Created:', newSchedule);
 
 ## Webhook Events
 
-The scheduler component sends notification events when macros execute:
+The scheduler sends a notification each time a due run finishes or is passed over:
 
-**Event:** `macro_scheduler:executed`
+**Websocket notification:** `notify_macro_scheduler_executed`
 
-**Payload:**
+**Parameters:**
 ```json
-{
+[
+  {
     "schedule": "Morning Preheat",
-    "macro": "PREHEAT_BED TEMP=60",
-    "time": "2025-10-13T07:00:00"
-}
+    "macro": "PREHEAT_BED",
+    "time": "2025-10-13T07:00:00",
+    "status": "failed",
+    "error": "Unknown command"
+  }
+]
 ```
 
-To receive these events, subscribe to Moonraker websocket notifications. See [Moonraker documentation](https://moonraker.readthedocs.io/en/latest/web_api/#websocket-api) for details.
+`status` is `ok`, `failed`, `missed`, `skipped`, or `invalid`, and `error` is null when there is nothing to report. See the [Moonraker documentation](https://moonraker.readthedocs.io/en/latest/web_api/#websocket-api) for connecting to the websocket.
 
 ---
 
@@ -693,7 +709,7 @@ curl -H "X-Api-Key: your-api-key-here" \
 
 ## Versioning
 
-API version is tied to the component version. Check the component logs for version information:
+The API version is tied to the component version, which the component logs at startup:
 
 ```bash
 grep "Macro Scheduler" ~/printer_data/logs/moonraker.log
