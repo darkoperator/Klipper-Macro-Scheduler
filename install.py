@@ -30,6 +30,14 @@ PANEL_FILES = ("macro_scheduler.py", "macro_scheduler_editor.py")
 WEB_PAGE = "scheduler.html"
 DEFAULT_WEB_CLIENTS = ("mainsail", "fluidd")
 ORIGIN_URL = "https://github.com/darkoperator/Klipper-Macro-Scheduler.git"
+INCLUDE_RE = re.compile(r"^\[include\s+([^\]]+?)\s*\]\s*$", re.MULTILINE)
+UPDATE_SECTION_RE = re.compile(
+    r"^\[update_manager\s+([^\]]+?)\s*\]\s*$.*?(?=^\[|\Z)", re.MULTILINE | re.DOTALL
+)
+# The option and any indented lines that continue its list.
+PERSISTENT_FILES_RE = re.compile(
+    r"^persistent_files\s*[:=][^\n]*(?:\n|\Z)(?:[ \t]+\S[^\n]*(?:\n|\Z))*", re.MULTILINE
+)
 
 
 @dataclass
@@ -101,6 +109,31 @@ def section_span(text: str, name: str) -> Optional[re.Match]:
     )
 
 
+def config_files(main_config: Path) -> List[Path]:
+    """Return a config file and every file it includes, as Moonraker reads them."""
+    found: List[Path] = []
+    seen = set()
+
+    def visit(path: Path) -> None:
+        resolved = path.resolve()
+        if resolved in seen:
+            return
+        seen.add(resolved)
+        found.append(path)
+        for pattern in INCLUDE_RE.findall(path.read_text()):
+            if pattern.startswith("/"):
+                absolute = Path(pattern)
+                matches = absolute.parent.glob(absolute.name)
+            else:
+                matches = path.parent.glob(pattern)
+            for match in sorted(matches):
+                if match.is_file():
+                    visit(match)
+
+    visit(main_config)
+    return found
+
+
 def write_config(path: Path, original: str, updated: str, report: Report) -> None:
     if updated == original:
         return
@@ -119,29 +152,42 @@ def repo_config_path() -> str:
         return str(SCRIPT_DIR)
 
 
-def add_persistent_web_page(text: str, client: str, report: Report) -> str:
-    """Keep the web page when Moonraker replaces the web client's folder."""
-    section = f"update_manager {client}"
-    match = section_span(text, section)
-    if match is None:
-        report.warnings.append(
-            f"No [{section}] section found in moonraker.conf. If that client is "
-            f"updated through Moonraker, add 'persistent_files: {WEB_PAGE}' to its "
-            "section or the page will be removed by each update."
-        )
-        return text
-    body = match.group(0)
-    if WEB_PAGE in body:
-        return text
-    if re.search(r"(?m)^persistent_files\s*[:=]", body):
-        report.warnings.append(
-            f"[{section}] already sets persistent_files. Add {WEB_PAGE} to that "
-            "list or the page will be removed by each update."
-        )
-        return text
-    header, _, rest = body.partition("\n")
-    updated = f"{header}\npersistent_files: {WEB_PAGE}\n{rest}"
-    return text[:match.start()] + updated + text[match.end():]
+def section_updates_folder(name: str, body: str, web_dir: Path) -> bool:
+    """Tell whether an update_manager section manages a web client folder."""
+    path_option = re.search(r"(?m)^path\s*[:=]\s*(\S+)", body)
+    if path_option is not None:
+        return Path(path_option.group(1)).expanduser().resolve() == web_dir.resolve()
+    return name.split()[-1] == web_dir.name
+
+
+def add_page_to_section(body: str) -> str:
+    """Add the web page to a section's persistent_files list."""
+    existing = PERSISTENT_FILES_RE.search(body)
+    if existing is None:
+        header, _, rest = body.partition("\n")
+        return f"{header}\npersistent_files: {WEB_PAGE}\n{rest}"
+    if WEB_PAGE in existing.group(0).replace(":", " ").replace("=", " ").split():
+        return body
+    option = existing.group(0)
+    if not option.endswith("\n"):
+        option += "\n"
+    return body[:existing.start()] + option + f"    {WEB_PAGE}\n" + body[existing.end():]
+
+
+def protect_web_page(text: str, web_dirs: List[Path]) -> str:
+    """Keep the page when Moonraker replaces a web client's folder.
+
+    Moonraker deletes everything in the folder during an update except
+    persistent_files. A client with no section is never updated by Moonraker, so
+    it needs nothing. If one is added later, running the installer again covers it.
+    """
+    def update_section(match: "re.Match[str]") -> str:
+        body = match.group(0)
+        if any(section_updates_folder(match.group(1), body, path) for path in web_dirs):
+            return add_page_to_section(body)
+        return body
+
+    return UPDATE_SECTION_RE.sub(update_section, text)
 
 
 def remove_install_script(text: str) -> str:
@@ -161,14 +207,13 @@ def update_moonraker_config(paths: Paths, web_dirs: List[Path], report: Report) 
             "README yourself."
         )
         return
-    original = config_path.read_text()
-    text = original
-    if not has_section(text, "macro_scheduler"):
-        text = text.rstrip() + "\n\n[macro_scheduler]\n"
-    if has_section(text, "update_manager macro_scheduler"):
-        text = remove_install_script(text)
-    else:
-        text = text.rstrip() + (
+    originals = {path: path.read_text() for path in config_files(config_path)}
+    updated = dict(originals)
+    all_text = "\n".join(originals.values())
+    if not has_section(all_text, "macro_scheduler"):
+        updated[config_path] = updated[config_path].rstrip() + "\n\n[macro_scheduler]\n"
+    if not has_section(all_text, "update_manager macro_scheduler"):
+        updated[config_path] = updated[config_path].rstrip() + (
             "\n\n[update_manager macro_scheduler]\n"
             "type: git_repo\n"
             f"path: {repo_config_path()}\n"
@@ -176,9 +221,9 @@ def update_moonraker_config(paths: Paths, web_dirs: List[Path], report: Report) 
             "primary_branch: main\n"
             "managed_services: moonraker\n"
         )
-    for web_dir in web_dirs:
-        text = add_persistent_web_page(text, web_dir.name, report)
-    write_config(config_path, original, text, report)
+    for path, text in updated.items():
+        text = protect_web_page(remove_install_script(text), web_dirs)
+        write_config(path, originals[path], text, report)
 
 
 def update_klipperscreen_config(paths: Paths, report: Report) -> None:

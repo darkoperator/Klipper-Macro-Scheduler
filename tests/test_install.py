@@ -1,3 +1,4 @@
+import configparser
 import os
 import subprocess
 import sys
@@ -115,14 +116,118 @@ class WebClients(InstallCase):
         self.assertIn("persistent_files:", section)
         self.assertIn("scheduler.html", section)
 
-    def test_existing_persistent_files_are_left_alone_with_a_warning(self):
+    def persistent_files(self, path, section):
+        parser = configparser.ConfigParser(interpolation=None)
+        parser.read(str(path))
+        value = parser.get(section, "persistent_files")
+        return [line.strip() for line in value.splitlines() if line.strip()]
+
+    def test_existing_multiline_list_gets_the_page_added(self):
         self.moonraker_conf.write_text(
-            "[update_manager mainsail]\ntype: web\npersistent_files:\n  theme.css\n"
+            "[update_manager mainsail]\ntype: web\npath: ~/mainsail\n"
+            "persistent_files:\n  theme.css\n  logo.png\nchannel: stable\n"
         )
         result = self.run_installer()
-        self.assertIn("theme.css", self.moonraker_conf.read_text())
-        self.assertNotIn("scheduler.html", self.moonraker_conf.read_text())
-        self.assertIn("persistent_files", result.stdout)
+        self.assertEqual(
+            self.persistent_files(self.moonraker_conf, "update_manager mainsail"),
+            ["theme.css", "logo.png", "scheduler.html"],
+        )
+        self.assertIn("channel: stable", self.moonraker_conf.read_text())
+        self.assertNotIn("Warnings", result.stdout)
+
+    def test_existing_single_value_gets_the_page_added(self):
+        self.moonraker_conf.write_text(
+            "[update_manager mainsail]\ntype: web\npersistent_files: theme.css\n"
+        )
+        self.run_installer()
+        self.assertEqual(
+            self.persistent_files(self.moonraker_conf, "update_manager mainsail"),
+            ["theme.css", "scheduler.html"],
+        )
+
+    def test_page_already_listed_is_not_added_again(self):
+        self.moonraker_conf.write_text(
+            "[update_manager mainsail]\ntype: web\npersistent_files:\n  scheduler.html\n"
+        )
+        self.run_installer()
+        self.assertEqual(self.moonraker_conf.read_text().count("scheduler.html"), 1)
+
+    def test_client_moonraker_does_not_update_gets_no_warning_or_section(self):
+        (self.home / "fluidd").mkdir()
+        result = self.run_installer()
+        self.assertNotIn("fluidd", self.moonraker_conf.read_text())
+        self.assertNotIn("Warnings", result.stdout)
+        self.assertTrue((self.home / "fluidd" / "scheduler.html").is_symlink())
+
+    def test_section_in_an_included_file_is_updated_there(self):
+        included = self.config / "updates.conf"
+        included.write_text(MAINSAIL_SECTION)
+        self.moonraker_conf.write_text("[server]\n\n[include updates.conf]\n")
+        self.run_installer()
+        self.assertEqual(
+            self.persistent_files(included, "update_manager mainsail"), ["scheduler.html"]
+        )
+        self.assertNotIn("update_manager mainsail", self.moonraker_conf.read_text())
+        self.assertTrue(list(self.config.glob("updates.conf.bak*")))
+
+    def test_includes_are_followed_through_globs_and_nesting(self):
+        extras = self.config / "extras"
+        extras.mkdir()
+        (extras / "nested.conf").write_text(MAINSAIL_SECTION)
+        (extras / "first.conf").write_text("[include nested.conf]\n")
+        self.moonraker_conf.write_text("[include extras/f*.conf]\n")
+        self.run_installer()
+        self.assertEqual(
+            self.persistent_files(extras / "nested.conf", "update_manager mainsail"),
+            ["scheduler.html"],
+        )
+
+    def test_recursive_include_does_not_hang(self):
+        (self.config / "a.conf").write_text("[include moonraker.conf]\n")
+        self.moonraker_conf.write_text("[include a.conf]\n")
+        self.run_installer()
+
+    def test_macro_scheduler_section_in_an_include_is_not_duplicated(self):
+        (self.config / "a.conf").write_text(
+            "[macro_scheduler]\n\n[update_manager macro_scheduler]\ntype: git_repo\n"
+            "install_script: install.py\n"
+        )
+        self.moonraker_conf.write_text("[include a.conf]\n")
+        self.run_installer()
+        self.assertNotIn("macro_scheduler", self.moonraker_conf.read_text())
+        self.assertNotIn("install_script", (self.config / "a.conf").read_text())
+
+    def test_section_is_matched_by_path_not_just_name(self):
+        web = self.home / "custom_web"
+        web.mkdir()
+        self.moonraker_conf.write_text(
+            "[update_manager my_client]\ntype: web\npath: ~/custom_web\n\n"
+            "[update_manager mainsail]\ntype: web\npath: ~/mainsail\n"
+        )
+        self.run_installer("--web-dir", str(web))
+        self.assertEqual(
+            self.persistent_files(self.moonraker_conf, "update_manager my_client"),
+            ["scheduler.html"],
+        )
+        self.assertNotIn(
+            "persistent_files",
+            self.moonraker_conf.read_text().split("[update_manager mainsail]")[1],
+        )
+
+    def test_section_named_for_a_client_at_another_path_is_not_changed(self):
+        self.moonraker_conf.write_text(
+            "[update_manager mainsail]\ntype: web\npath: ~/somewhere_else\n"
+        )
+        self.run_installer()
+        self.assertNotIn("persistent_files", self.moonraker_conf.read_text())
+
+    def test_older_client_section_name_is_recognized(self):
+        self.moonraker_conf.write_text("[update_manager client mainsail]\ntype: web\n")
+        self.run_installer()
+        self.assertEqual(
+            self.persistent_files(self.moonraker_conf, "update_manager client mainsail"),
+            ["scheduler.html"],
+        )
 
 
 class MissingPieces(InstallCase):

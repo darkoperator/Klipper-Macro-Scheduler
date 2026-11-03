@@ -114,7 +114,11 @@ managed_services: moonraker
 ```
 Update Manager can only restart Moonraker for this section. After an update that changes the panels, restart KlipperScreen yourself: `sudo systemctl restart KlipperScreen`.
 
-If you installed by hand and use Moonraker to update Mainsail or Fluidd, add `persistent_files: scheduler.html` to that client's `[update_manager ...]` section, or each update will delete the page. The installer does this for you.
+Moonraker deletes extra files from Mainsail and Fluidd when it updates them. To keep the page, the installer adds it to `persistent_files` in that client's `[update_manager ...]` section, including sections in included files. If you later add such a section, or installed by hand, add this to it, or run the installer again:
+
+```ini
+persistent_files: scheduler.html
+```
 
 ### Restart Moonraker
 
@@ -506,7 +510,7 @@ gcode:
    - **Schedule Name**: Descriptive name
    - **Macro**: Select from dropdown. This must be a single command name; pass any arguments as parameters.
    - **Schedule Type**: Choose one of the 5 types
-   - **Type-specific fields**: Fill based on selected type
+   - **Type-specific fields**: Fill based on selected type. Dates use a calendar, and hours and minutes use dropdowns, so there's no need to type them.
    - **Parameters**: Optional JSON object with macro parameters
    - **If a Run Is Missed** and **Skip while printing**: See [Missed Runs and Printing](#missed-runs-and-printing)
 3. Click "Add Schedule"
@@ -723,6 +727,7 @@ Fixes:
 - A single loop rechecks the clock every 30 seconds, so clock changes after boot no longer delay runs.
 - Fixed stored XSS in the web UI, and misleading display of interval, cron, and authorization errors.
 - `macro_scheduler:executed` now reaches websocket clients, as `notify_macro_scheduler_executed`, and includes the result.
+- Web UI: dates use a calendar, and hours and minutes use dropdowns in every browser, so times don't need typing. The default "once" time is the next hour.
 - KlipperScreen: delete asks for confirmation, the list refreshes when shown, Back works as expected, dates are readable, and the form never defaults to a past time.
 - Installer: `--dry-run` no longer changes config files, the list panel gets its menu entry, Fluidd and multiple instances are supported, missing folders are no longer created, and the web page survives web client updates.
 
