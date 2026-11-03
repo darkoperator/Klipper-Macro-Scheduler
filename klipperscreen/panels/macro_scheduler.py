@@ -1,5 +1,6 @@
 import logging
-from typing import Any, Dict, List
+from datetime import datetime
+from typing import Any, Dict, List, Optional
 
 import gi
 
@@ -57,6 +58,9 @@ class Panel(ScreenPanel):
         container.pack_start(scroll, True, True, 0)
 
         self.content.add(container)
+
+    def activate(self):
+        # KlipperScreen caches panels, and calls this each time one is shown.
         self.refresh_schedules()
 
     # ------------------------------------------------------------------ helpers
@@ -83,6 +87,30 @@ class Panel(ScreenPanel):
         self.labels["schedule_grid"].attach(placeholder, 0, 0, 1, 1)
         self.labels["schedule_grid"].show_all()
 
+    def _format_datetime(self, value: str) -> str:
+        try:
+            parsed = datetime.fromisoformat(value)
+        except (TypeError, ValueError):
+            return str(value)
+        use_24h = self._config.get_main_config().getboolean("24htime", True)
+        return parsed.strftime("%a %b %d %H:%M" if use_24h else "%a %b %d %I:%M %p")
+
+    def _format_last_result(self, schedule: Dict[str, Any]) -> Optional[str]:
+        labels = {
+            "ok": _("last run OK"),
+            "running": _("running now"),
+            "failed": _("last run failed"),
+            "missed": _("last run missed"),
+            "skipped": _("last run skipped"),
+            "interrupted": _("last run interrupted"),
+            "invalid": _("invalid"),
+        }
+        status = schedule.get("last_status")
+        if status not in labels:
+            return None
+        error = schedule.get("last_error")
+        return f"{labels[status]}: {error}" if error else labels[status]
+
     def _format_details(self, schedule: Dict[str, Any]) -> str:
         pieces: List[str] = []
 
@@ -97,7 +125,7 @@ class Panel(ScreenPanel):
         if schedule.get("enabled"):
             next_run = schedule.get("next_run")
             if next_run:
-                pieces.append(_("next: %s") % next_run)
+                pieces.append(_("next: %s") % self._format_datetime(next_run))
         else:
             pieces.append(_("disabled"))
 
@@ -105,6 +133,10 @@ class Panel(ScreenPanel):
         if isinstance(params, dict) and params:
             formatted_params = " ".join(f"{k}={v}" for k, v in params.items())
             pieces.append(formatted_params)
+
+        last_result = self._format_last_result(schedule)
+        if last_result:
+            pieces.append(last_result)
 
         return " · ".join(pieces) if pieces else _("No additional details")
 
@@ -163,7 +195,7 @@ class Panel(ScreenPanel):
             delete_btn = self._gtk.Button("delete", _("Delete"), "color2", self.bts, Gtk.PositionType.LEFT, 1)
             delete_btn.get_style_context().add_class("buttons_slim")
             delete_btn.set_hexpand(False)
-            delete_btn.connect("clicked", self._delete_schedule, int(schedule_id))
+            delete_btn.connect("clicked", self._confirm_delete, int(schedule_id), name)
             button_box.add(delete_btn)
 
             row.add(button_box)
@@ -172,55 +204,59 @@ class Panel(ScreenPanel):
         grid.show_all()
 
     # --------------------------------------------------------------- API calls
+    def _send(self, method: str, params: Dict[str, Any], callback) -> bool:
+        """Send a Moonraker request, returning False if there's no connection."""
+        websocket = getattr(self._screen, "_ws", None)
+        if websocket is None:
+            return False
+        return bool(websocket.send_method(method, params, callback))
+
     def refresh_schedules(self, _widget=None):
-        if not getattr(self._screen, "apiclient", None):
+        self._set_status(_("Loading schedules…"))
+        if not self._send("server.macro_scheduler.schedules", {}, self._on_schedules_loaded):
             self._render_placeholder(_("Moonraker connection unavailable"))
             self._set_status(_("Not connected"))
-            return
 
-        self._set_status(_("Loading schedules…"))
-        response = self._screen.apiclient.send_request("server/macro_scheduler/schedules")
-
-        if not response or "schedules" not in response:
-            logging.error("Failed to load schedules: %s", response)
+    def _on_schedules_loaded(self, result, _method, _params):
+        if "error" in result:
+            message = result["error"].get("message", _("Unable to load schedules"))
+            logging.error("Failed to load schedules: %s", message)
             self._render_placeholder(_("Unable to load schedules"))
-            self._set_status(_("Load failed"))
+            self._set_status(message)
             return
-
-        schedules = response.get("schedules", [])
+        schedules = result.get("result", {}).get("schedules", [])
         self._render_schedule_rows(schedules)
         self._set_status(_("%d schedule(s) loaded") % len(schedules))
 
+    def _on_action_done(self, result, _method, _params):
+        if "error" in result:
+            self._screen.show_popup_message(result["error"].get("message", _("Request failed")), level=2)
+        self.refresh_schedules()
+
     def _toggle_schedule(self, _widget, schedule_id: int):
-        if not getattr(self._screen, "apiclient", None):
-            return
+        if not self._send("server.macro_scheduler.toggle", {"id": schedule_id}, self._on_action_done):
+            self._screen.show_popup_message(_("Moonraker connection unavailable"), level=2)
 
-        result = self._screen.apiclient.post_request(
-            "server/macro_scheduler/toggle",
-            json={"id": schedule_id},
+    def _confirm_delete(self, _widget, schedule_id: int, name: str):
+        buttons = [
+            {"name": _("Delete"), "response": Gtk.ResponseType.OK, "style": "dialog-error"},
+            {"name": _("Cancel"), "response": Gtk.ResponseType.CANCEL, "style": "dialog-info"},
+        ]
+        label = Gtk.Label(
+            label=_("Delete schedule \"%s\"?") % name,
+            wrap=True,
+            wrap_mode=Pango.WrapMode.WORD_CHAR,
         )
-        if not result:
-            self._screen.show_popup_message(_("Failed to toggle schedule"), level=2)
-            return
-        self.refresh_schedules()
+        self._gtk.Dialog(_("Delete Schedule"), buttons, label, self._on_delete_response, schedule_id)
 
-    def _delete_schedule(self, _widget, schedule_id: int):
-        if not getattr(self._screen, "apiclient", None):
+    def _on_delete_response(self, dialog, response, schedule_id: int):
+        self._gtk.remove_dialog(dialog)
+        if response != Gtk.ResponseType.OK:
             return
-
-        result = self._screen.apiclient.post_request(
-            "server/macro_scheduler/delete",
-            json={"id": schedule_id},
-        )
-        if not result:
-            self._screen.show_popup_message(_("Failed to delete schedule"), level=2)
-            return
-        self.refresh_schedules()
+        if not self._send("server.macro_scheduler.delete", {"id": schedule_id}, self._on_action_done):
+            self._screen.show_popup_message(_("Moonraker connection unavailable"), level=2)
 
     def _open_creator(self, _widget=None):
-        # Remove existing editor instances so the back stack remains clean
-        while "macro_scheduler_editor" in self._screen._cur_panels:
-            self._screen._cur_panels.remove("macro_scheduler_editor")
         self._screen.show_panel("macro_scheduler_editor", title=_("New Schedule"), panel_name="macro_scheduler_editor")
 
 

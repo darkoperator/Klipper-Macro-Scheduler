@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from typing import Any, Dict, Optional
 
 import gi
@@ -8,6 +8,11 @@ gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk, GLib
 
 from ks_includes.screen_panel import ScreenPanel
+
+
+def default_once_datetime(now: datetime) -> datetime:
+    """Return the start of the next hour, so the default is never in the past."""
+    return now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
 
 
 class Panel(ScreenPanel):
@@ -36,17 +41,23 @@ class Panel(ScreenPanel):
         self._stack: Optional[Gtk.Stack] = None
         self._days_buttons: Dict[int, Gtk.ToggleButton] = {}
         self._once_date_button: Optional[Gtk.Button] = None
-        self._once_date_value: date = datetime.now().date()
+        self._once_date_value: date = default_once_datetime(datetime.now()).date()
         self._once_time_controls: Dict[str, Any] = {}
         self._daily_time_controls: Dict[str, Any] = {}
         self._weekly_time_controls: Dict[str, Any] = {}
         self._interval_spin: Optional[Gtk.SpinButton] = None
+        self._missed_switch: Optional[Gtk.Switch] = None
+        self._printing_switch: Optional[Gtk.Switch] = None
         self._combo_drop_times: Dict[int, datetime] = {}
 
         for child in self.content.get_children():
             self.content.remove(child)
 
         self._build_form()
+
+    def activate(self):
+        # KlipperScreen caches panels, so clear the form each time it is shown.
+        self._reset_form()
 
     # ------------------------------------------------------------------ layout
     def _build_form(self):
@@ -95,6 +106,11 @@ class Panel(ScreenPanel):
         self._hook_keyboard_entries()
 
         form.attach(self._stack, 0, row, 2, 1)
+        row += 1
+
+        self._missed_switch = self._add_switch(form, row, _("Run if missed"), False)
+        row += 1
+        self._printing_switch = self._add_switch(form, row, _("Skip while printing"), True)
 
         scroller = self._gtk.ScrolledWindow()
         scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
@@ -134,21 +150,16 @@ class Panel(ScreenPanel):
         if isinstance(self._type_combo, Gtk.ComboBoxText):
             self._type_combo.set_active_id("once")
 
-        self._once_date_value = datetime.now().date()
+        once_default = default_once_datetime(datetime.now())
+        self._once_date_value = once_default.date()
         if self._once_date_button:
             self._once_date_button.set_label(self._once_date_value.isoformat())
+        if self._once_time_controls:
+            self._set_time(self._once_time_controls, once_default.hour, once_default.minute)
 
-        for controls in (self._once_time_controls, self._daily_time_controls, self._weekly_time_controls):
-            if not controls:
-                continue
-            if isinstance(controls.get("hour"), Gtk.ComboBoxText):
-                controls["hour"].set_active(11)
-            if isinstance(controls.get("minute"), Gtk.ComboBoxText):
-                controls["minute"].set_active(0)
-            if isinstance(controls.get("am"), Gtk.ToggleButton):
-                controls["am"].set_active(True)
-            if isinstance(controls.get("pm"), Gtk.ToggleButton):
-                controls["pm"].set_active(False)
+        for controls in (self._daily_time_controls, self._weekly_time_controls):
+            if controls:
+                self._set_time(controls, 12, 0)
 
         for btn in self._days_buttons.values():
             btn.set_active(False)
@@ -156,6 +167,11 @@ class Panel(ScreenPanel):
 
         if isinstance(self._interval_spin, Gtk.SpinButton):
             self._interval_spin.set_value(60)
+
+        if self._missed_switch:
+            self._missed_switch.set_active(False)
+        if self._printing_switch:
+            self._printing_switch.set_active(True)
 
     @staticmethod
     def _apply_toggle_style(button: Gtk.ToggleButton):
@@ -201,6 +217,19 @@ class Panel(ScreenPanel):
         grid.attach(entry, 1, row, 1, 1)
         return entry
 
+    def _add_switch(self, grid: Gtk.Grid, row: int, label: str, active: bool) -> Gtk.Switch:
+        lbl = Gtk.Label(label=f"{label}:")
+        lbl.set_xalign(0.0)
+        lbl.set_yalign(0.5)
+        grid.attach(lbl, 0, row, 1, 1)
+
+        switch = Gtk.Switch()
+        switch.set_active(active)
+        switch.set_halign(Gtk.Align.START)
+        switch.set_valign(Gtk.Align.CENTER)
+        grid.attach(switch, 1, row, 1, 1)
+        return switch
+
     def _add_macro_combo(self, grid: Gtk.Grid, row: int) -> Gtk.ComboBox:
         lbl = Gtk.Label(label=_("Macro:"))
         lbl.set_xalign(0.0)
@@ -215,7 +244,7 @@ class Panel(ScreenPanel):
         combo = Gtk.ComboBox.new_with_model_and_entry(store)
         combo.set_hexpand(True)
         combo.set_entry_text_column(0)
-        combo.set_tooltip_text(_("Choose a Klipper macro or type a custom command"))
+        combo.set_tooltip_text(_("Choose a Klipper macro or type its name"))
         combo.connect("notify::popup-shown", self._on_combo_popup_toggle)
         entry = combo.get_child()
         if isinstance(entry, Gtk.Entry):
@@ -351,42 +380,27 @@ class Panel(ScreenPanel):
             self._stack.set_visible_child_name(selected or "once")
 
     def _go_back(self, _widget=None):
-        if self._screen._cur_panels and self._screen._cur_panels[-1] == "macro_scheduler_editor":
-            # Return to the listing panel when exiting the editor
-            self._screen.show_panel("macro_scheduler", title=_("Macro Scheduler"), panel_name="macro_scheduler")
-        else:
-            self._screen._menu_go_back(True)
+        self._screen._menu_go_back()
 
-    def _create_schedule(self, widget):
+    def _create_schedule(self, _widget):
         payload = self._collect_payload()
         if not payload:
             return
+        websocket = getattr(self._screen, "_ws", None)
+        if websocket is None or not websocket.send_method("server.macro_scheduler.add", payload, self._on_created):
+            self._screen.show_popup_message(_("Moonraker connection unavailable"), level=2)
 
-        result = self._screen.apiclient.post_request(
-            "server/macro_scheduler/add",
-            json=payload,
-        )
-        schedule = None
-        if isinstance(result, dict):
-            if "schedule" in result:
-                schedule = result["schedule"]
-            elif "result" in result and isinstance(result["result"], dict):
-                schedule = result["result"].get("schedule")
-        if not schedule:
-            self._screen.show_popup_message(_("Failed to create schedule"), level=2)
-            logging.error("Scheduler creation failed: %s", result)
+    def _on_created(self, result, _method, _params):
+        if "error" in result:
+            message = result["error"].get("message", _("Failed to create schedule"))
+            logging.error("Scheduler creation failed: %s", message)
+            self._screen.show_popup_message(message, level=2)
             return
-
         self._screen.show_popup_message(_("Schedule created"), level=1)
-        self._reset_form()
-        self._screen.show_panel("macro_scheduler", title=_("Macro Scheduler"), panel_name="macro_scheduler")
+        self._go_back()
 
     # -------------------------------------------------------------- validation
     def _collect_payload(self) -> Optional[Dict]:
-        if not getattr(self._screen, "apiclient", None):
-            self._screen.show_popup_message(_("Moonraker connection unavailable"), level=2)
-            return None
-
         name = self._name_entry.get_text().strip() if self._name_entry else ""
         macro = self._get_macro_text()
         schedule_type = (
@@ -418,6 +432,7 @@ class Panel(ScreenPanel):
             "schedule_type": schedule_type,
             "params": params,
         }
+        payload.update(self._collect_policy_fields())
 
         try:
             if schedule_type == "once":
@@ -433,6 +448,12 @@ class Panel(ScreenPanel):
             return None
 
         return payload
+
+    def _collect_policy_fields(self) -> Dict[str, object]:
+        return {
+            "missed_run_policy": "run" if self._missed_switch.get_active() else "skip",
+            "skip_if_printing": self._printing_switch.get_active(),
+        }
 
     def _get_macro_text(self) -> str:
         if not self._macro_combo:
@@ -463,6 +484,8 @@ class Panel(ScreenPanel):
             raise ValueError(_("Incomplete schedule configuration"))
         time_value = self._get_time_value(self._once_time_controls)
         combined = datetime.combine(self._once_date_value, datetime.strptime(time_value, "%H:%M").time())
+        if combined <= datetime.now():
+            raise ValueError(_("Date and time must be in the future"))
         return {"datetime": combined.isoformat()}
 
     def _collect_daily_fields(self) -> Dict[str, str]:
@@ -485,84 +508,70 @@ class Panel(ScreenPanel):
             raise ValueError(_("Interval must be greater than zero"))
         return {"interval_minutes": minutes}
 
-    def _build_time_selector(self, default: str = "12:00") -> (Gtk.Box, Dict[str, Any]):
-        try:
-            default_dt = datetime.strptime(default, "%H:%M")
-        except ValueError:
-            default_dt = datetime.strptime("12:00", "%H:%M")
+    def _use_24h(self) -> bool:
+        return self._config.get_main_config().getboolean("24htime", True)
 
-        hour_combo = Gtk.ComboBoxText()
-        for hr in range(1, 13):
-            hour_combo.append_text(f"{hr:02d}")
-        hour_value = default_dt.hour % 12 or 12
-        hour_combo.set_active(hour_value - 1)
+    @staticmethod
+    def _on_time_spin_output(spin: Gtk.SpinButton) -> bool:
+        spin.set_text(f"{spin.get_value_as_int():02d}")
+        return True
 
-        minute_combo = Gtk.ComboBoxText()
-        for minute in range(0, 60):
-            minute_combo.append_text(f"{minute:02d}")
-        minute_combo.set_active(default_dt.minute)
+    def _build_time_spin(self, lower: int, upper: int) -> Gtk.SpinButton:
+        adjustment = Gtk.Adjustment(lower, lower, upper, 1, 5, 0)
+        spin = Gtk.SpinButton(adjustment=adjustment, climb_rate=1, digits=0)
+        spin.set_wrap(True)
+        spin.set_numeric(True)
+        # The on-screen keyboard isn't hooked up here; the +/- buttons set the value.
+        spin.set_editable(False)
+        spin.connect("output", self._on_time_spin_output)
+        return spin
 
-        am_button = Gtk.ToggleButton(label="AM")
-        pm_button = Gtk.ToggleButton(label="PM")
-        for btn in (am_button, pm_button):
-            btn.get_style_context().add_class("buttons_slim")
-            btn.set_hexpand(False)
-            btn.set_size_request(-1, int(self._gtk.font_size * 1.1))
+    def _build_time_selector(self) -> (Gtk.Box, Dict[str, Any]):
+        use_24h = self._use_24h()
+        hour_spin = self._build_time_spin(0, 23) if use_24h else self._build_time_spin(1, 12)
+        minute_spin = self._build_time_spin(0, 59)
 
         container = Gtk.Box(spacing=6)
-        container.pack_start(hour_combo, False, False, 0)
+        container.pack_start(hour_spin, False, False, 0)
         container.pack_start(Gtk.Label(label=":"), False, False, 0)
-        container.pack_start(minute_combo, False, False, 0)
-        container.pack_start(am_button, False, False, 0)
-        container.pack_start(pm_button, False, False, 0)
+        container.pack_start(minute_spin, False, False, 0)
 
-        am_button.connect("toggled", self._on_period_toggled, pm_button)
-        pm_button.connect("toggled", self._on_period_toggled, am_button)
+        controls = {"hour": hour_spin, "minute": minute_spin, "am": None, "pm": None}
+        if not use_24h:
+            am_button = Gtk.ToggleButton(label="AM")
+            pm_button = Gtk.ToggleButton(label="PM")
+            for btn in (am_button, pm_button):
+                btn.get_style_context().add_class("buttons_slim")
+                btn.set_hexpand(False)
+                btn.set_size_request(-1, int(self._gtk.font_size * 1.1))
+                container.pack_start(btn, False, False, 0)
+            am_button.connect("toggled", self._on_period_toggled, pm_button)
+            pm_button.connect("toggled", self._on_period_toggled, am_button)
+            controls["am"] = am_button
+            controls["pm"] = pm_button
 
-        if default_dt.hour < 12:
-            am_button.set_active(True)
-            pm_button.set_active(False)
-        else:
-            pm_button.set_active(True)
-            am_button.set_active(False)
-        self._apply_toggle_style(am_button)
-        self._apply_toggle_style(pm_button)
+        self._set_time(controls, 12, 0)
+        return container, controls
 
-        return container, {
-            "hour": hour_combo,
-            "minute": minute_combo,
-            "am": am_button,
-            "pm": pm_button,
-        }
+    def _set_time(self, controls: Dict[str, Any], hour: int, minute: int) -> None:
+        """Show a 24-hour time in the controls, whichever format they use."""
+        controls["minute"].set_value(minute)
+        if controls["am"] is None:
+            controls["hour"].set_value(hour)
+            return
+        controls["hour"].set_value(hour % 12 or 12)
+        controls["am"].set_active(hour < 12)
+        controls["pm"].set_active(hour >= 12)
+        self._apply_toggle_style(controls["am"])
+        self._apply_toggle_style(controls["pm"])
 
     def _get_time_value(self, controls: Dict[str, Any]) -> str:
-        hour_widget = controls.get("hour")
-        minute_widget = controls.get("minute")
-        if not isinstance(hour_widget, Gtk.ComboBoxText) or not isinstance(minute_widget, Gtk.ComboBoxText):
-            raise ValueError(_("Time fields incomplete"))
-
-        hour_text = hour_widget.get_active_text()
-        minute_text = minute_widget.get_active_text()
-        if not (hour_text and minute_text):
-            raise ValueError(_("Time fields incomplete"))
-
-        period_text = None
-        if isinstance(controls.get("am"), Gtk.ToggleButton):
-            period_text = "AM" if controls["am"].get_active() else "PM"
-        elif isinstance(controls.get("period"), Gtk.ComboBoxText):
-            period_text = controls["period"].get_active_text()
-        else:
-            period_text = "AM"
-
-        if not period_text:
-            raise ValueError(_("Time fields incomplete"))
-
-        hour = int(hour_text)
-        minute = int(minute_text)
-        if period_text == "AM":
+        hour = controls["hour"].get_value_as_int()
+        minute = controls["minute"].get_value_as_int()
+        if controls["am"] is not None:
             hour = hour % 12
-        else:
-            hour = hour % 12 + 12
+            if controls["pm"].get_active():
+                hour += 12
         return f"{hour:02d}:{minute:02d}"
 
     def _open_date_picker(self, _widget):
