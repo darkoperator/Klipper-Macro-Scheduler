@@ -24,7 +24,8 @@ function loadPage({ search = '', hostname = 'printer', protocol = 'http:', port 
         elements[id] = elements[id] || {
             id, value: '', innerHTML: '', checked: false, style: {},
             classList: { add() {}, remove() {} },
-            appendChild() {},
+            children: [],
+            appendChild(child) { this.children.push(child); },
         };
         return elements[id];
     };
@@ -186,7 +187,8 @@ test('new schedules send the per-schedule settings', async () => {
     page.element('scheduleMacro').value = 'M';
     page.element('scheduleType').value = 'daily';
     page.element('scheduleParams').value = '{}';
-    page.element('scheduleTime').value = '06:00';
+    page.element('scheduleDailyHour').value = '06';
+    page.element('scheduleDailyMinute').value = '00';
     page.element('scheduleMissed').value = 'run';
     page.element('scheduleSkipPrinting').checked = false;
     await page.run('addSchedule()');
@@ -197,4 +199,125 @@ test('new schedules send the per-schedule settings', async () => {
 test('the form has the per-schedule settings', () => {
     assert.ok(html.includes('id="scheduleMissed"'));
     assert.ok(html.includes('id="scheduleSkipPrinting"'));
+});
+
+async function submitted(fields) {
+    const sent = [];
+    const page = loadPage({
+        fetchImpl: async (url, options) => {
+            if (options) sent.push(JSON.parse(options.body));
+            return jsonResponse(200, { result: { schedules: [] } });
+        },
+    });
+    page.element('scheduleName').value = 'n';
+    page.element('scheduleMacro').value = 'M';
+    page.element('scheduleParams').value = '{}';
+    for (const [id, value] of Object.entries(fields)) {
+        page.element(id).value = value;
+    }
+    await page.run('addSchedule()');
+    return { sent, alerts: page.alerts };
+}
+
+test('date and time pickers build the once datetime', async () => {
+    const { sent } = await submitted({
+        scheduleType: 'once', scheduleDate: '2026-11-03',
+        scheduleOnceHour: '07', scheduleOnceMinute: '05',
+    });
+    assert.strictEqual(sent[0].datetime, '2026-11-03T07:05:00');
+});
+
+test('once without a date is refused before sending', async () => {
+    const { sent, alerts } = await submitted({
+        scheduleType: 'once', scheduleDate: '',
+        scheduleOnceHour: '07', scheduleOnceMinute: '05',
+    });
+    assert.strictEqual(sent.length, 0);
+    assert.strictEqual(alerts.length, 1);
+});
+
+test('time pickers build the daily time', async () => {
+    const { sent } = await submitted({
+        scheduleType: 'daily', scheduleDailyHour: '21', scheduleDailyMinute: '30',
+    });
+    assert.strictEqual(sent[0].time, '21:30');
+});
+
+test('time pickers build the weekly time', async () => {
+    const page = loadPage({
+        fetchImpl: async (url, options) => {
+            if (options) page.sent = JSON.parse(options.body);
+            return jsonResponse(200, { result: { schedules: [] } });
+        },
+    });
+    page.element('scheduleName').value = 'n';
+    page.element('scheduleMacro').value = 'M';
+    page.element('scheduleParams').value = '{}';
+    page.element('scheduleType').value = 'weekly';
+    page.element('scheduleWeeklyHour').value = '08';
+    page.element('scheduleWeeklyMinute').value = '15';
+    page.context.document.querySelectorAll = () => [{ value: '0' }, { value: '6' }];
+    await page.run('addSchedule()');
+    assert.strictEqual(page.sent.time, '08:15');
+    assert.deepStrictEqual([...page.sent.days], [0, 6]);
+});
+
+test('time pickers list every hour and minute with a 12-hour hint', () => {
+    const page = loadPage();
+    page.run('initTimePickers()');
+    for (const prefix of ['Once', 'Daily', 'Weekly']) {
+        const hours = page.element(`schedule${prefix}Hour`).children;
+        const minutes = page.element(`schedule${prefix}Minute`).children;
+        assert.strictEqual(hours.length, 24);
+        assert.strictEqual(minutes.length, 60);
+        assert.strictEqual(hours[0].value, '00');
+        assert.match(hours[0].textContent, /12 AM/);
+        assert.strictEqual(hours[13].value, '13');
+        assert.match(hours[13].textContent, /1 PM/);
+        assert.strictEqual(minutes[5].value, '05');
+    }
+});
+
+test('the default once time is the next hour, even across midnight', () => {
+    const page = loadPage();
+    const check = (now, date, hour) => {
+        page.context.__now = now;
+        assert.strictEqual(page.run('defaultOnceTime(__now).date'), date);
+        assert.strictEqual(page.run('defaultOnceTime(__now).hour'), hour);
+    };
+    check(new Date(2026, 10, 2, 15, 40), '2026-11-02', '16');
+    check(new Date(2026, 10, 2, 23, 40), '2026-11-03', '00');
+    check(new Date(2026, 11, 31, 23, 59), '2027-01-01', '00');
+});
+
+test('opening the form fills in a default date and time', () => {
+    const page = loadPage();
+    page.run('resetAddForm()');
+    assert.match(page.element('scheduleDate').value, /^\d{4}-\d{2}-\d{2}$/);
+    assert.match(page.element('scheduleOnceHour').value, /^\d{2}$/);
+    assert.strictEqual(page.element('scheduleOnceMinute').value, '00');
+    assert.strictEqual(page.element('scheduleDate').min, page.run('formatDateValue(new Date())'));
+    assert.strictEqual(page.element('scheduleDailyHour').value, '12');
+    assert.strictEqual(page.element('scheduleWeeklyMinute').value, '00');
+});
+
+test('clicking the date field opens the calendar', () => {
+    const page = loadPage();
+    let opened = 0;
+    page.element('scheduleDate').showPicker = () => { opened += 1; };
+    page.run("openDatePicker(document.getElementById('scheduleDate'))");
+    assert.strictEqual(opened, 1);
+});
+
+test('a browser without showPicker falls back to its own control', () => {
+    const page = loadPage();
+    page.run("openDatePicker(document.getElementById('scheduleDate'))");
+    page.element('scheduleDate').showPicker = () => { throw new Error('not allowed'); };
+    page.run("openDatePicker(document.getElementById('scheduleDate'))");
+});
+
+test('the form has no typed time fields', () => {
+    assert.ok(!html.includes('type="time"'));
+    assert.ok(!html.includes('type="datetime-local"'));
+    assert.ok(html.includes('type="date"'));
 });

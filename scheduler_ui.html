@@ -257,16 +257,19 @@
             color-scheme: dark;
         }
 
-        /* Style datetime and time picker icons */
-        input[type="datetime-local"],
-        input[type="time"],
+        /* Style the date picker icon */
         input[type="date"] {
             color-scheme: dark;
+            cursor: pointer;
+        }
+
+        .time-picker {
+            display: flex;
+            align-items: center;
+            gap: 8px;
         }
 
         /* Make sure icons are visible */
-        input[type="datetime-local"]::-webkit-calendar-picker-indicator,
-        input[type="time"]::-webkit-calendar-picker-indicator,
         input[type="date"]::-webkit-calendar-picker-indicator {
             filter: invert(1);
             cursor: pointer;
@@ -351,21 +354,35 @@
 
             <!-- Once: Date & Time -->
             <div class="form-group" id="field_once" style="display: block;">
-                <label>Date & Time</label>
-                <input type="datetime-local" id="scheduleDatetime">
+                <label>Date</label>
+                <input type="date" id="scheduleDate" onclick="openDatePicker(this)">
+                <label style="margin-top: 12px;">Time</label>
+                <div class="time-picker">
+                    <select id="scheduleOnceHour" aria-label="Hour"></select>
+                    <span>:</span>
+                    <select id="scheduleOnceMinute" aria-label="Minute"></select>
+                </div>
             </div>
 
             <!-- Daily: Time only -->
             <div class="form-group" id="field_daily" style="display: none;">
                 <label>Time</label>
-                <input type="time" id="scheduleTime">
+                <div class="time-picker">
+                    <select id="scheduleDailyHour" aria-label="Hour"></select>
+                    <span>:</span>
+                    <select id="scheduleDailyMinute" aria-label="Minute"></select>
+                </div>
             </div>
 
             <!-- Weekly: Time + Days -->
             <div id="field_weekly" style="display: none;">
                 <div class="form-group">
                     <label>Time</label>
-                    <input type="time" id="scheduleTimeWeekly">
+                    <div class="time-picker">
+                        <select id="scheduleWeeklyHour" aria-label="Hour"></select>
+                        <span>:</span>
+                        <select id="scheduleWeeklyMinute" aria-label="Minute"></select>
+                    </div>
                 </div>
                 
                 <div class="form-group">
@@ -524,6 +541,7 @@
 
         // Initialize
         document.addEventListener('DOMContentLoaded', () => {
+            initTimePickers();
             checkStatus();
         });
 
@@ -697,25 +715,15 @@
 
             // Get schedule-type specific values
             if (scheduleType === 'once') {
-                const datetime = document.getElementById('scheduleDatetime').value;
-                if (!datetime) {
-                    alert('Please select a date and time');
+                const date = document.getElementById('scheduleDate').value;
+                if (!date) {
+                    alert('Please select a date');
                     return;
                 }
-                payload.datetime = datetime;
+                payload.datetime = `${date}T${getPickedTime('Once')}:00`;
             } else if (scheduleType === 'daily') {
-                const time = document.getElementById('scheduleTime').value;
-                if (!time) {
-                    alert('Please select a time');
-                    return;
-                }
-                payload.time = time;
+                payload.time = getPickedTime('Daily');
             } else if (scheduleType === 'weekly') {
-                const time = document.getElementById('scheduleTimeWeekly').value;
-                if (!time) {
-                    alert('Please select a time');
-                    return;
-                }
                 // Get selected days
                 const dayCheckboxes = document.querySelectorAll('.day-checkbox:checked');
                 const days = Array.from(dayCheckboxes).map(cb => parseInt(cb.value));
@@ -723,7 +731,7 @@
                     alert('Please select at least one day');
                     return;
                 }
-                payload.time = time;
+                payload.time = getPickedTime('Weekly');
                 payload.days = days;
             } else if (scheduleType === 'interval') {
                 const intervalMinutes = parseInt(document.getElementById('scheduleInterval').value);
@@ -904,6 +912,62 @@
             return new Date(datetime).toLocaleString();
         }
 
+        function pad2(value) {
+            return String(value).padStart(2, '0');
+        }
+
+        // The local date in the format a date input uses.
+        function formatDateValue(date) {
+            return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
+        }
+
+        // The start of the next hour, so the default is never in the past.
+        function defaultOnceTime(now) {
+            const next = new Date(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours() + 1);
+            return { date: formatDateValue(next), hour: pad2(next.getHours()) };
+        }
+
+        function initTimePickers() {
+            ['Once', 'Daily', 'Weekly'].forEach(prefix => {
+                const hourSelect = document.getElementById(`schedule${prefix}Hour`);
+                for (let hour = 0; hour < 24; hour++) {
+                    const option = document.createElement('option');
+                    option.value = pad2(hour);
+                    option.textContent = `${pad2(hour)} (${hour % 12 || 12} ${hour < 12 ? 'AM' : 'PM'})`;
+                    hourSelect.appendChild(option);
+                }
+                const minuteSelect = document.getElementById(`schedule${prefix}Minute`);
+                for (let minute = 0; minute < 60; minute++) {
+                    const option = document.createElement('option');
+                    option.value = pad2(minute);
+                    option.textContent = pad2(minute);
+                    minuteSelect.appendChild(option);
+                }
+            });
+        }
+
+        function getPickedTime(prefix) {
+            const hour = document.getElementById(`schedule${prefix}Hour`).value;
+            const minute = document.getElementById(`schedule${prefix}Minute`).value;
+            return `${hour}:${minute}`;
+        }
+
+        function setPickedTime(prefix, hour, minute) {
+            document.getElementById(`schedule${prefix}Hour`).value = hour;
+            document.getElementById(`schedule${prefix}Minute`).value = minute;
+        }
+
+        // Opens the calendar from anywhere on the field, not just its icon.
+        function openDatePicker(input) {
+            try {
+                if (input.showPicker) {
+                    input.showPicker();
+                }
+            } catch (error) {
+                // The browser's own control still works.
+            }
+        }
+
         function openAddModal() {
             document.getElementById('addModal').classList.add('active');
             resetAddForm();
@@ -917,9 +981,13 @@
             document.getElementById('scheduleName').value = '';
             document.getElementById('scheduleMacro').value = '';
             document.getElementById('scheduleType').value = 'once';
-            document.getElementById('scheduleDatetime').value = '';
-            document.getElementById('scheduleTime').value = '';
-            document.getElementById('scheduleTimeWeekly').value = '';
+            const onceDefault = defaultOnceTime(new Date());
+            const dateInput = document.getElementById('scheduleDate');
+            dateInput.value = onceDefault.date;
+            dateInput.min = formatDateValue(new Date());
+            setPickedTime('Once', onceDefault.hour, '00');
+            setPickedTime('Daily', '12', '00');
+            setPickedTime('Weekly', '12', '00');
             document.getElementById('scheduleInterval').value = '60';
             document.getElementById('scheduleCron').value = '';
             document.getElementById('scheduleParams').value = '{}';
